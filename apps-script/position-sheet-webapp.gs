@@ -332,6 +332,7 @@ function appendFundingRun_(workbook, row) {
 }
 
 function styleFundingSheet_(sheet, columnCount, rowCount, options) {
+  if (sheet.getFilter()) sheet.getFilter().remove();
   sheet.getRange(1, 1, 1, columnCount)
     .setBackground("#303030")
     .setFontColor("#FFFFFF")
