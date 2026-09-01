@@ -186,7 +186,9 @@ test("authenticated Binance WebSocket diagnostic returns sanitized method result
       positions: { status: 200, count: 1 },
       openOrders: { status: 400, code: "api_-1002" },
       openAlgoOrders: { status: 400, code: "api_-1002" },
-      algoOrders: { status: 400, code: "api_-1002" }
+      algoOrders: { status: 400, code: "api_-1002" },
+      openOrdersRest: { status: 0, code: "network" },
+      openAlgoOrdersRest: { status: 0, code: "network" }
     }
   });
   assert.equal(sentRequests.length, 4);

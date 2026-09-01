@@ -103,18 +103,29 @@ export async function handleRequest(request, env = {}, fetchImpl = fetch, webSoc
     if (request.method !== "POST") return methodNotAllowed("POST");
     if (!(await authorized(request, env.PROXY_TOKEN, fetchImpl))) return jsonResponse({ ok: false }, 401);
 
+    const body = await readOptionalJson(request);
+    if (body === null) return jsonResponse({ ok: false, reason: "invalid_request" }, 400);
+    const runtimeEnv = withRequestCredentials(env, body);
     const missing = ["BINANCE_API_KEY", "BINANCE_API_SECRET"]
-      .filter((name) => !String(env[name] || "").trim());
+      .filter((name) => !String(runtimeEnv[name] || "").trim());
     if (missing.length > 0) return jsonResponse({ ok: false, reason: "not_configured" }, 503);
 
     const config = {
-      apiKey: String(env.BINANCE_API_KEY).trim(),
-      apiSecret: String(env.BINANCE_API_SECRET).trim()
+      apiKey: String(runtimeEnv.BINANCE_API_KEY).trim(),
+      apiSecret: String(runtimeEnv.BINANCE_API_SECRET).trim()
     };
     const runDiagnostic = async (method) => {
       try {
         const payload = await binanceWebSocketRequest(config, method, webSocketFactory);
         return safeWebSocketDiagnostic(payload);
+      } catch (error) {
+        return { status: 0, code: safeFailureCode(error) };
+      }
+    };
+    const runRestDiagnostic = async (path) => {
+      try {
+        const rows = await binanceSignedGet(config, path, fetchImpl);
+        return { status: 200, count: asArray(rows).length };
       } catch (error) {
         return { status: 0, code: safeFailureCode(error) };
       }
@@ -127,6 +138,8 @@ export async function handleRequest(request, env = {}, fetchImpl = fetch, webSoc
       diagnostics.openOrders = await runDiagnostic("openOrders.status");
       diagnostics.openAlgoOrders = await runDiagnostic("openAlgoOrders.status");
       diagnostics.algoOrders = await runDiagnostic("algoOrders.status");
+      diagnostics.openOrdersRest = await runRestDiagnostic("/fapi/v1/openOrders");
+      diagnostics.openAlgoOrdersRest = await runRestDiagnostic("/fapi/v1/openAlgoOrders");
     }
 
     return jsonResponse({
