@@ -1,5 +1,4 @@
-const BINANCE_BASE = "https://fapi.binance.com";
-const BINANCE_FUNDING_BASES = [
+const BINANCE_REST_BASES = [
   "https://fapi.binance.com",
   "https://fapi1.binance.com",
   "https://fapi2.binance.com",
@@ -333,7 +332,7 @@ async function fetchBinanceFundingState(env, startTime, endTime, fetchImpl, webS
 
 async function fetchBinanceFundingSchedule(symbol, startTime, endTime, fetchImpl) {
   let lastError;
-  for (const base of BINANCE_FUNDING_BASES) {
+  for (const base of BINANCE_REST_BASES) {
     try {
       const query = new URLSearchParams({
         symbol,
@@ -362,7 +361,7 @@ async function binanceFundingSignedGet(config, path, params, fetchImpl) {
   }).map(([key, value]) => [key, String(value)])).toString();
   const signature = await hmacHex("binance-funding", config.apiSecret, query);
   let lastError;
-  for (const base of BINANCE_FUNDING_BASES) {
+  for (const base of BINANCE_REST_BASES) {
     try {
       return await fetchJson(`${base}${path}?${query}&signature=${signature}`, {
         headers: { ...UPSTREAM_HEADERS, "X-MBX-APIKEY": config.apiKey }
@@ -596,9 +595,13 @@ async function fetchBinanceState(env, fetchImpl, webSocketFactory) {
     return await fetchBinanceRestState(config, fetchImpl);
   } catch (restError) {
     try {
-      return await fetchBinanceWebSocketState(config, webSocketFactory);
+      return await fetchBinanceHybridState(config, fetchImpl, webSocketFactory);
     } catch {
-      throw restError;
+      try {
+        return await fetchBinanceWebSocketState(config, webSocketFactory);
+      } catch {
+        throw restError;
+      }
     }
   }
 }
@@ -618,21 +621,38 @@ async function fetchBinanceRestState(config, fetchImpl) {
     price: row.markPrice
   })).filter(Boolean);
 
-  const orders = [...asArray(openOrderRows), ...asArray(algoOrderRows)].map((row) => normalizeOrder({
-    symbol: row.symbol,
-    source: "binance",
-    side: row.side,
-    size: row.origQty || row.quantity || row.qty,
-    price: row.price,
-    triggerPrice: row.stopPrice || row.triggerPrice,
-    type: row.type || row.algoType,
-    status: row.status || row.orderStatus
-  })).filter(Boolean);
+  const orders = normalizeBinanceOrders([...asArray(openOrderRows), ...asArray(algoOrderRows)]);
 
   return {
     positions,
     orders,
     coverage: { positions: "complete", orders: "complete", transport: "rest" },
+    warnings: []
+  };
+}
+
+async function fetchBinanceHybridState(config, fetchImpl, webSocketFactory) {
+  const [positionPayload, openOrderRows, algoOrderRows] = await Promise.all([
+    binanceWebSocketRequest(config, "v2/account.position", webSocketFactory),
+    binanceWebSocketArray(config, "openOrders.status", webSocketFactory)
+      .catch(() => binanceSignedGet(config, "/fapi/v1/openOrders", fetchImpl)),
+    binanceSignedGet(config, "/fapi/v1/openAlgoOrders", fetchImpl)
+  ]);
+  if (Number(positionPayload?.status) !== 200 || !Array.isArray(positionPayload?.result)) {
+    throw upstreamError(apiFailureCode(positionPayload?.error?.code));
+  }
+
+  const positions = positionPayload.result.map((row) => normalizePosition({
+    symbol: row.symbol,
+    source: "binance",
+    side: numberValue(row.positionAmt) > 0 ? "long" : "short",
+    size: row.positionAmt,
+    price: row.markPrice
+  })).filter(Boolean);
+  return {
+    positions,
+    orders: normalizeBinanceOrders([...asArray(openOrderRows), ...asArray(algoOrderRows)]),
+    coverage: { positions: "complete", orders: "complete", transport: "websocket" },
     warnings: []
   };
 }
@@ -663,9 +683,38 @@ async function binanceSignedGet(config, path, fetchImpl) {
     recvWindow: "5000"
   }).toString();
   const signature = await hmacHex("binance", config.apiSecret, query);
-  return fetchJson(`${BINANCE_BASE}${path}?${query}&signature=${signature}`, {
-    headers: { ...UPSTREAM_HEADERS, "X-MBX-APIKEY": config.apiKey }
-  }, fetchImpl, "binance");
+  let lastError;
+  for (const base of BINANCE_REST_BASES) {
+    try {
+      return await fetchJson(`${base}${path}?${query}&signature=${signature}`, {
+        headers: { ...UPSTREAM_HEADERS, "X-MBX-APIKEY": config.apiKey }
+      }, fetchImpl, "binance");
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || upstreamError("network");
+}
+
+async function binanceWebSocketArray(config, method, webSocketFactory) {
+  const payload = await binanceWebSocketRequest(config, method, webSocketFactory);
+  if (Number(payload?.status) !== 200 || !Array.isArray(payload?.result)) {
+    throw upstreamError(apiFailureCode(payload?.error?.code));
+  }
+  return payload.result;
+}
+
+function normalizeBinanceOrders(rows) {
+  return rows.map((row) => normalizeOrder({
+    symbol: row.symbol,
+    source: "binance",
+    side: row.side,
+    size: row.origQty || row.quantity || row.qty,
+    price: row.price,
+    triggerPrice: row.stopPrice || row.triggerPrice,
+    type: row.type || row.orderType || row.algoType,
+    status: row.status || row.orderStatus || row.algoStatus
+  })).filter(Boolean);
 }
 
 async function fetchBybitState(env, fetchImpl) {

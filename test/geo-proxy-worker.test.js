@@ -446,7 +446,7 @@ test("returns only normalized Binance and Bybit state", async () => {
   assert.doesNotMatch(JSON.stringify(body), /private|accountAlias|accountId/);
 });
 
-test("falls back to Binance WebSocket positions and marks order coverage unavailable", async () => {
+test("falls back to Binance hybrid transport with complete regular and algo orders", async () => {
   const webSocketFactory = () => {
     const listeners = new Map();
     queueMicrotask(() => listeners.get("open")?.());
@@ -454,14 +454,17 @@ test("falls back to Binance WebSocket positions and marks order coverage unavail
       addEventListener(name, listener) { listeners.set(name, listener); },
       send(value) {
         const request = JSON.parse(value);
+        const result = request.method === "v2/account.position"
+          ? [
+            { symbol: "BTCUSDT", positionAmt: "2", markPrice: "100", privateField: "hidden" },
+            { symbol: "ETHUSDT", positionAmt: "0", markPrice: "10" }
+          ]
+          : [{ symbol: "BTCUSDT", side: "SELL", origQty: "2", price: "130", type: "LIMIT", status: "NEW" }];
         queueMicrotask(() => listeners.get("message")?.({
           data: JSON.stringify({
             id: request.id,
             status: 200,
-            result: [
-              { symbol: "BTCUSDT", positionAmt: "2", markPrice: "100", privateField: "hidden" },
-              { symbol: "ETHUSDT", positionAmt: "0", markPrice: "10" }
-            ]
+            result
           })
         }));
       },
@@ -477,6 +480,16 @@ test("falls back to Binance WebSocket positions and marks order coverage unavail
     async (input) => {
       const url = new URL(input);
       if (url.hostname.includes("binance")) {
+        if (url.pathname === "/fapi/v1/openAlgoOrders") {
+          return Response.json([{
+            symbol: "BTCUSDT",
+            side: "SELL",
+            quantity: "2",
+            triggerPrice: "90",
+            orderType: "STOP_MARKET",
+            algoStatus: "NEW"
+          }]);
+        }
         return Response.json({ code: -1003, msg: "private rate-limit detail" }, { status: 429 });
       }
       return Response.json({ retCode: 0, result: { list: [] } });
@@ -489,13 +502,54 @@ test("falls back to Binance WebSocket positions and marks order coverage unavail
   assert.deepEqual(body.positions, [
     { symbol: "BTC", source: "binance", side: "long", size: 2, price: 100 }
   ]);
-  assert.deepEqual(body.orders, []);
+  assert.deepEqual(body.orders, [
+    { symbol: "BTC", source: "binance", side: "sell", size: 2, price: 130, triggerPrice: 0, type: "LIMIT", status: "NEW" },
+    { symbol: "BTC", source: "binance", side: "sell", size: 2, price: 0, triggerPrice: 90, type: "STOP_MARKET", status: "NEW" }
+  ]);
   assert.deepEqual(body.coverage, {
-    binance: { positions: "complete", orders: "unavailable", transport: "websocket" },
+    binance: { positions: "complete", orders: "complete", transport: "websocket" },
     bybit: { positions: "complete", orders: "complete", transport: "rest" }
   });
-  assert.deepEqual(body.warnings, ["binance_orders_unavailable"]);
+  assert.deepEqual(body.warnings, []);
   assert.doesNotMatch(JSON.stringify(body), /private|rate-limit detail/);
+});
+
+test("keeps Binance positions available when every order transport is unavailable", async () => {
+  const webSocketFactory = () => {
+    const listeners = new Map();
+    queueMicrotask(() => listeners.get("open")?.());
+    return {
+      addEventListener(name, listener) { listeners.set(name, listener); },
+      send(value) {
+        const request = JSON.parse(value);
+        const response = request.method === "v2/account.position"
+          ? { id: request.id, status: 200, result: [{ symbol: "BTCUSDT", positionAmt: "2", markPrice: "100" }] }
+          : { id: request.id, status: 400, error: { code: -1002 } };
+        queueMicrotask(() => listeners.get("message")?.({ data: JSON.stringify(response) }));
+      },
+      close() {}
+    };
+  };
+  const response = await handleRequest(
+    new Request("https://worker.test/state", {
+      method: "POST",
+      headers: { authorization: "Bearer test-token" },
+      body: JSON.stringify({ exchanges: ["binance"] })
+    }),
+    ENV,
+    async () => Response.json({ code: -1003 }, { status: 429 }),
+    webSocketFactory
+  );
+  const body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(body.positions.length, 1);
+  assert.deepEqual(body.orders, []);
+  assert.deepEqual(body.coverage.binance, {
+    positions: "complete",
+    orders: "unavailable",
+    transport: "websocket"
+  });
+  assert.deepEqual(body.warnings, ["binance_orders_unavailable"]);
 });
 
 test("explicit Binance WebSocket mode skips banned REST requests", async () => {

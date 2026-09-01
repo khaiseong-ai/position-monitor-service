@@ -28,17 +28,34 @@ if (relayUrl && relayToken) {
   let diagnostic = { status: "network" };
   try {
     const url = new URL(relayUrl);
-    url.pathname = "/diagnostics/binance-ws";
+    url.pathname = "/state";
     url.search = "";
     const response = await fetch(url, {
       method: "POST",
-      headers: { authorization: `Bearer ${relayToken}` },
+      headers: {
+        authorization: `Bearer ${relayToken}`,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        exchanges: ["binance"],
+        credentials: {
+          binance: {
+            apiKey: String(process.env.BINANCE_API_KEY || "").trim(),
+            apiSecret: String(process.env.BINANCE_API_SECRET || "").trim()
+          }
+        }
+      }),
       signal: AbortSignal.timeout(30000)
     });
     const body = await response.json().catch(() => null);
     diagnostic = {
       status: `http_${response.status}`,
-      methods: sanitizeMethods(body?.methods)
+      ok: body?.ok === true,
+      positions: Array.isArray(body?.positions) ? body.positions.length : 0,
+      orders: Array.isArray(body?.orders) ? body.orders.length : 0,
+      coverage: sanitizeCoverage(body?.coverage?.binance),
+      warnings: sanitizeWarnings(body?.warnings),
+      failureCode: sanitizeFailureCode(body?.failureCodes?.binance)
     };
   } catch {
     // Do not expose relay or exchange response details in workflow logs.
@@ -66,19 +83,24 @@ async function relayAuthorizationToken() {
   return String(process.env.POSITION_RELAY_TOKEN || "").trim();
 }
 
-function sanitizeMethods(value) {
+function sanitizeCoverage(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  const result = {};
-  for (const [name, item] of Object.entries(value)) {
-    if (!/^[a-z0-9_-]+$/i.test(name) || !item || typeof item !== "object") continue;
-    const status = Number(item.status);
-    const count = Number(item.count);
-    const code = String(item.code || "");
-    result[name] = {
-      status: Number.isInteger(status) ? status : 0,
-      ...(Number.isInteger(count) && count >= 0 ? { count } : {}),
-      ...(/^[a-z0-9_-]+$/i.test(code) ? { code } : {})
-    };
-  }
-  return result;
+  const positions = String(value.positions || "");
+  const orders = String(value.orders || "");
+  const transport = String(value.transport || "");
+  return {
+    ...(["complete", "unavailable"].includes(positions) ? { positions } : {}),
+    ...(["complete", "unavailable"].includes(orders) ? { orders } : {}),
+    ...(["rest", "websocket"].includes(transport) ? { transport } : {})
+  };
+}
+
+function sanitizeWarnings(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => String(item)).filter((item) => /^[a-z0-9_-]+$/i.test(item));
+}
+
+function sanitizeFailureCode(value) {
+  const code = String(value || "");
+  return /^[a-z0-9_-]+$/i.test(code) ? code : "";
 }
