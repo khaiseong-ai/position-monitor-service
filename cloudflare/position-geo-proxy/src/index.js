@@ -9,7 +9,7 @@ const BINANCE_PROBE_BASES = [
   ["binance", "https://fapi.binance.com"]
 ];
 const BINANCE_WS = "wss://ws-fapi.binance.com/ws-fapi/v1";
-const BINANCE_ORDER_RETRY_DELAYS_MS = [750, 1500];
+const BINANCE_ORDER_RETRY_DELAYS_MS = [500, 1000, 1500];
 const BYBIT_BASE = "https://api.bybit.com";
 const HOUR_MS = 60 * 60 * 1000;
 const FUNDING_MAX_WINDOW_MS = 7 * 24 * HOUR_MS;
@@ -698,7 +698,7 @@ async function fetchBinancePositionScopedState(config, fetchImpl, webSocketFacto
   try {
     orderRows = await fetchBinanceOrderRowsWithRetry(config, fetchImpl);
     ordersComplete = true;
-  } catch {
+  } catch (globalOrderError) {
     let orderFailures = 0;
     for (const symbol of symbols) {
       try {
@@ -707,6 +707,9 @@ async function fetchBinancePositionScopedState(config, fetchImpl, webSocketFacto
         orderFailures += 1;
       }
     }
+    console.warn(
+      `Binance order fallback: global=${safeFailureCode(globalOrderError)} scoped_failures=${orderFailures}`
+    );
     ordersComplete = symbols.length > 0 && orderFailures === 0;
   }
   return {
@@ -730,10 +733,18 @@ async function fetchBinanceOrderRows(config, fetchImpl, params = {}) {
 }
 
 async function fetchBinanceOrderRowsWithRetry(config, fetchImpl) {
+  const rows = [];
+  for (const path of ["/fapi/v1/openOrders", "/fapi/v1/openAlgoOrders"]) {
+    rows.push(...asArray(await binanceSignedGetWithRetry(config, path, fetchImpl)));
+  }
+  return rows;
+}
+
+async function binanceSignedGetWithRetry(config, path, fetchImpl) {
   let lastError;
   for (let attempt = 0; attempt <= BINANCE_ORDER_RETRY_DELAYS_MS.length; attempt += 1) {
     try {
-      return await fetchBinanceOrderRows(config, fetchImpl);
+      return await binanceSignedGet(config, path, fetchImpl);
     } catch (error) {
       lastError = error;
       const delayMs = BINANCE_ORDER_RETRY_DELAYS_MS[attempt];
