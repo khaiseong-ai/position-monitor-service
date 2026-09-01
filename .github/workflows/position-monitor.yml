@@ -13,6 +13,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 concurrency:
   group: position-monitor
@@ -25,7 +26,7 @@ jobs:
     env:
       POSITION_RELAY_URL: ${{ secrets.POSITION_RELAY_URL }}
       POSITION_RELAY_TOKEN: ${{ secrets.POSITION_RELAY_TOKEN }}
-      POSITION_RELAY_EXCHANGES: bybit
+      POSITION_RELAY_EXCHANGES: binance,bybit
       BINANCE_API_KEY: ${{ secrets.BINANCE_API_KEY }}
       BINANCE_API_SECRET: ${{ secrets.BINANCE_API_SECRET }}
       BYBIT_API_KEY: ${{ secrets.BYBIT_API_KEY }}
@@ -73,9 +74,6 @@ jobs:
 
       - name: Validate source
         run: npm run check && npm test
-
-      - name: Connect free Cloudflare WARP egress
-        run: bash scripts/connect-warp.sh
 
       - name: Probe official exchange endpoints
         if: github.event_name == 'workflow_dispatch'

@@ -1,11 +1,11 @@
 services:
   - type: web
-    name: ks-position-geo-proxy
+    name: ks-position-geo-proxy-singapore
     runtime: node
-    repo: https://github.com/khaiseong-ai/position-monitor-service
-    branch: main
     plan: free
     region: singapore
+    branch: main
     buildCommand: npm ci
     startCommand: npm run relay:start
     healthCheckPath: /health
+    autoDeployTrigger: commit

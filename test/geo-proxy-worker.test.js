@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { handleRequest } from "../cloudflare/position-geo-proxy/src/index.js";
+import {
+  handleRequest,
+  verifyGithubOidcToken
+} from "../cloudflare/position-geo-proxy/src/index.js";
 
 const ENV = {
   PROXY_TOKEN: "test-token",
@@ -9,6 +12,68 @@ const ENV = {
   BYBIT_API_KEY: "bybit-key",
   BYBIT_API_SECRET: "bybit-secret"
 };
+
+function base64Url(value) {
+  return Buffer.from(value).toString("base64url");
+}
+
+async function signedGithubOidcToken(claimOverrides = {}) {
+  const keys = await crypto.subtle.generateKey({
+    name: "RSASSA-PKCS1-v1_5",
+    modulusLength: 2048,
+    publicExponent: new Uint8Array([1, 0, 1]),
+    hash: "SHA-256"
+  }, true, ["sign", "verify"]);
+  const kid = `test-${crypto.randomUUID()}`;
+  const publicJwk = await crypto.subtle.exportKey("jwk", keys.publicKey);
+  publicJwk.kid = kid;
+  publicJwk.alg = "RS256";
+  publicJwk.use = "sig";
+  const now = Math.floor(Date.now() / 1000);
+  const header = base64Url(JSON.stringify({ alg: "RS256", typ: "JWT", kid }));
+  const claims = base64Url(JSON.stringify({
+    iss: "https://token.actions.githubusercontent.com",
+    aud: "position-relay",
+    repository: "khaiseong-ai/position-monitor-service",
+    ref: "refs/heads/main",
+    event_name: "workflow_dispatch",
+    workflow_ref: "khaiseong-ai/position-monitor-service/.github/workflows/position-monitor.yml@refs/heads/main",
+    nbf: now - 30,
+    exp: now + 300,
+    ...claimOverrides
+  }));
+  const signingInput = `${header}.${claims}`;
+  const signature = await crypto.subtle.sign(
+    { name: "RSASSA-PKCS1-v1_5" },
+    keys.privateKey,
+    new TextEncoder().encode(signingInput)
+  );
+  return {
+    token: `${signingInput}.${Buffer.from(signature).toString("base64url")}`,
+    publicJwk
+  };
+}
+
+test("accepts only signed GitHub OIDC tokens for the main workflow repository", async () => {
+  const valid = await signedGithubOidcToken();
+  const fetchJwks = async (url) => {
+    assert.equal(String(url), "https://token.actions.githubusercontent.com/.well-known/jwks");
+    return Response.json({ keys: [valid.publicJwk] });
+  };
+  assert.equal(await verifyGithubOidcToken(valid.token, fetchJwks), true);
+
+  const wrongRepository = await signedGithubOidcToken({ repository: "someone/else" });
+  assert.equal(await verifyGithubOidcToken(wrongRepository.token, async () => {
+    throw new Error("claims must fail before key lookup");
+  }), false);
+
+  const wrongWorkflow = await signedGithubOidcToken({
+    workflow_ref: "khaiseong-ai/position-monitor-service/.github/workflows/untrusted.yml@refs/heads/main"
+  });
+  assert.equal(await verifyGithubOidcToken(wrongWorkflow.token, async () => {
+    throw new Error("workflow claims must fail before key lookup");
+  }), false);
+});
 
 test("rejects unauthenticated state requests without calling exchanges", async () => {
   const response = await handleRequest(

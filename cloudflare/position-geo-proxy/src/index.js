@@ -24,6 +24,14 @@ const UPSTREAM_HEADERS = {
   accept: "application/json",
   "user-agent": "position-monitor-service/1.0"
 };
+const GITHUB_OIDC_ISSUER = "https://token.actions.githubusercontent.com";
+const GITHUB_OIDC_JWKS = `${GITHUB_OIDC_ISSUER}/.well-known/jwks`;
+const GITHUB_OIDC_AUDIENCE = "position-relay";
+const GITHUB_REPOSITORY = "khaiseong-ai/position-monitor-service";
+const GITHUB_WORKFLOWS = new Set([
+  `${GITHUB_REPOSITORY}/.github/workflows/position-monitor.yml@refs/heads/main`,
+  `${GITHUB_REPOSITORY}/.github/workflows/ks-funding-sheet.yml@refs/heads/main`
+]);
 const REQUIRED_EXCHANGE_SECRETS = [
   "BINANCE_API_KEY",
   "BINANCE_API_SECRET",
@@ -31,7 +39,9 @@ const REQUIRED_EXCHANGE_SECRETS = [
   "BYBIT_API_SECRET"
 ];
 const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
 const hmacKeyCache = new Map();
+let githubJwksCache = { expiresAt: 0, keys: [] };
 
 export default {
   fetch(request, env) {
@@ -67,7 +77,7 @@ export async function handleRequest(request, env = {}, fetchImpl = fetch, webSoc
 
   if (url.pathname === "/diagnostics/binance-ws") {
     if (request.method !== "POST") return methodNotAllowed("POST");
-    if (!authorized(request, env.PROXY_TOKEN)) return jsonResponse({ ok: false }, 401);
+    if (!(await authorized(request, env.PROXY_TOKEN, fetchImpl))) return jsonResponse({ ok: false }, 401);
 
     const missing = ["BINANCE_API_KEY", "BINANCE_API_SECRET"]
       .filter((name) => !String(env[name] || "").trim());
@@ -103,13 +113,13 @@ export async function handleRequest(request, env = {}, fetchImpl = fetch, webSoc
 
   if (url.pathname === "/funding") {
     if (request.method !== "POST") return methodNotAllowed("POST");
-    if (!authorized(request, env.PROXY_TOKEN)) return jsonResponse({ ok: false }, 401);
+    if (!(await authorized(request, env.PROXY_TOKEN, fetchImpl))) return jsonResponse({ ok: false }, 401);
     return handleFundingRequest(request, env, fetchImpl, webSocketFactory);
   }
 
   if (url.pathname !== "/state") return jsonResponse({ ok: false }, 404);
   if (request.method !== "POST") return methodNotAllowed("POST");
-  if (!authorized(request, env.PROXY_TOKEN)) return jsonResponse({ ok: false }, 401);
+  if (!(await authorized(request, env.PROXY_TOKEN, fetchImpl))) return jsonResponse({ ok: false }, 401);
 
   const body = await readOptionalJson(request);
   if (body === null) return jsonResponse({ ok: false, reason: "invalid_request" }, 400);
@@ -908,15 +918,77 @@ async function hmacHex(label, secret, payload) {
   return [...new Uint8Array(signature)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function authorized(request, token) {
+async function authorized(request, token, fetchImpl) {
   const expected = `Bearer ${String(token || "")}`;
   const actual = String(request.headers.get("authorization") || "");
-  if (!token || actual.length !== expected.length) return false;
-  let difference = 0;
-  for (let index = 0; index < actual.length; index += 1) {
-    difference |= actual.charCodeAt(index) ^ expected.charCodeAt(index);
+  if (token && actual.length === expected.length) {
+    let difference = 0;
+    for (let index = 0; index < actual.length; index += 1) {
+      difference |= actual.charCodeAt(index) ^ expected.charCodeAt(index);
+    }
+    if (difference === 0) return true;
   }
-  return difference === 0;
+  if (!actual.startsWith("Bearer ")) return false;
+  return verifyGithubOidcToken(actual.slice("Bearer ".length), fetchImpl);
+}
+
+export async function verifyGithubOidcToken(token, fetchImpl = fetch) {
+  try {
+    const parts = String(token || "").split(".");
+    if (parts.length !== 3) return false;
+    const header = JSON.parse(textDecoder.decode(decodeBase64Url(parts[0])));
+    const claims = JSON.parse(textDecoder.decode(decodeBase64Url(parts[1])));
+    if (header.alg !== "RS256" || !header.kid) return false;
+
+    const now = Math.floor(Date.now() / 1000);
+    const audiences = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
+    if (claims.iss !== GITHUB_OIDC_ISSUER
+      || !audiences.includes(GITHUB_OIDC_AUDIENCE)
+      || claims.repository !== GITHUB_REPOSITORY
+      || claims.ref !== "refs/heads/main"
+      || !["schedule", "workflow_dispatch"].includes(claims.event_name)
+      || !GITHUB_WORKFLOWS.has(claims.workflow_ref)
+      || numberValue(claims.exp) < now - 30
+      || numberValue(claims.nbf) > now + 30) return false;
+
+    const jwk = await githubOidcKey(header.kid, fetchImpl);
+    if (!jwk) return false;
+    const key = await crypto.subtle.importKey(
+      "jwk",
+      jwk,
+      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+      false,
+      ["verify"]
+    );
+    return crypto.subtle.verify(
+      { name: "RSASSA-PKCS1-v1_5" },
+      key,
+      decodeBase64Url(parts[2]),
+      textEncoder.encode(`${parts[0]}.${parts[1]}`)
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function githubOidcKey(kid, fetchImpl) {
+  const cached = githubJwksCache.keys.find((item) => item.kid === kid);
+  if (cached && githubJwksCache.expiresAt > Date.now()) return cached;
+  const response = await fetchImpl(GITHUB_OIDC_JWKS, {
+    headers: UPSTREAM_HEADERS,
+    signal: AbortSignal.timeout(10000)
+  });
+  if (!response.ok) return null;
+  const body = await response.json().catch(() => null);
+  const keys = Array.isArray(body?.keys) ? body.keys : [];
+  githubJwksCache = { expiresAt: Date.now() + 60 * 60 * 1000, keys };
+  return keys.find((item) => item.kid === kid) || null;
+}
+
+function decodeBase64Url(value) {
+  const normalized = String(value).replace(/-/g, "+").replace(/_/g, "/");
+  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+  return Uint8Array.from(atob(padded), (character) => character.charCodeAt(0));
 }
 
 function normalizePosition({ symbol, source, side, size, price }) {

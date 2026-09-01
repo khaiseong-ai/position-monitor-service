@@ -12,10 +12,22 @@ const server = http.createServer(async (incoming, outgoing) => {
       }
     }
 
+    const method = incoming.method || "GET";
+    const chunks = [];
+    let bodySize = 0;
+    if (method !== "GET" && method !== "HEAD") {
+      for await (const chunk of incoming) {
+        bodySize += chunk.length;
+        if (bodySize > 64 * 1024) throw new Error("request_too_large");
+        chunks.push(chunk);
+      }
+    }
+
     const origin = `https://${incoming.headers.host || "localhost"}`;
     const request = new Request(new URL(incoming.url || "/", origin), {
-      method: incoming.method || "GET",
-      headers
+      method,
+      headers,
+      ...(chunks.length > 0 ? { body: Buffer.concat(chunks) } : {})
     });
     const response = await handleRequest(request, process.env);
 
