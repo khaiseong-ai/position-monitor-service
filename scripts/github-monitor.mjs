@@ -3,6 +3,7 @@ import {
   buildFailureMessage,
   buildSheetRows,
   envFlag,
+  failedExchangeDiagnostics,
   failedExchangeNames,
   missingRequiredSecrets,
   writePositionSheet
@@ -25,7 +26,8 @@ async function run() {
 
   if (state.errors.length > 0) {
     const failed = failedExchangeNames(state.errors);
-    console.error(`Monitor failed closed for ${failed.length} exchange(s): ${failed.join(", ") || "unknown"}`);
+    const diagnostics = failedExchangeDiagnostics(state.errors);
+    console.error(`Monitor failed closed for ${failed.length} exchange(s): ${diagnostics.join(", ") || "unknown"}`);
     if (notify) {
       try {
         await sendTelegram(config.telegram, buildFailureMessage(state.errors, state.lastCheckedAt));

@@ -4,6 +4,7 @@ import {
   buildFailureMessage,
   buildSheetRows,
   envFlag,
+  failedExchangeDiagnostics,
   failedExchangeNames,
   missingRequiredSecrets,
   writePositionSheet
@@ -44,6 +45,16 @@ test("reduces exchange failures to safe labels", () => {
   const message = buildFailureMessage(errors, "2026-09-01T12:00:00.000Z");
   assert.match(message, /Failed: bybit, mexc/);
   assert.doesNotMatch(message, /private response/);
+});
+
+test("classifies failures without logging exchange response text", () => {
+  const diagnostics = failedExchangeDiagnostics([
+    "binance: request HTTP 451: private response",
+    "bybit: bybit positions error: 10003 private response",
+    "mexc_orders: fetch failed: private response"
+  ]);
+  assert.deepEqual(diagnostics, ["binance=http_451", "bybit=api_code_10003", "mexc=network"]);
+  assert.doesNotMatch(diagnostics.join(" "), /private response/);
 });
 
 test("requires all monitoring credentials without exposing values", () => {
