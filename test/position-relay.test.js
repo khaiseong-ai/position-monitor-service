@@ -5,7 +5,11 @@ import { fetchPositionRelay } from "../lib/position-relay.js";
 const CONFIG = {
   url: "https://relay.example.test/state",
   token: "relay-token",
-  exchanges: ["binance", "bybit"]
+  exchanges: ["binance", "bybit"],
+  credentials: {
+    binance: { apiKey: "binance-key", apiSecret: "binance-secret" },
+    bybit: { apiKey: "bybit-key", apiSecret: "bybit-secret" }
+  }
 };
 
 test("accepts only normalized relay state for configured exchanges", async () => {
@@ -13,6 +17,10 @@ test("accepts only normalized relay state for configured exchanges", async () =>
     assert.equal(String(url), CONFIG.url);
     assert.equal(options.method, "POST");
     assert.equal(options.headers.authorization, "Bearer relay-token");
+    assert.deepEqual(JSON.parse(options.body), {
+      exchanges: ["binance", "bybit"],
+      credentials: CONFIG.credentials
+    });
     return Response.json({
       ok: true,
       checkedAt: "2026-09-01T12:00:00.000Z",

@@ -1,9 +1,20 @@
 const BINANCE_BASE = "https://fapi.binance.com";
+const BINANCE_FUNDING_BASES = [
+  "https://fapi.binance.com",
+  "https://fapi1.binance.com",
+  "https://fapi2.binance.com",
+  "https://fapi3.binance.com",
+  "https://fapi4.binance.com"
+];
 const BINANCE_PROBE_BASES = [
   ["binance", "https://fapi.binance.com"]
 ];
 const BINANCE_WS = "wss://ws-fapi.binance.com/ws-fapi/v1";
 const BYBIT_BASE = "https://api.bybit.com";
+const HOUR_MS = 60 * 60 * 1000;
+const FUNDING_MAX_WINDOW_MS = 7 * 24 * HOUR_MS;
+const FUNDING_PAGE_LIMIT = 1000;
+const COMMON_FUNDING_INTERVALS = [1, 2, 4, 8, 12, 24];
 const NO_STORE_HEADERS = {
   "cache-control": "no-store",
   "content-type": "application/json; charset=utf-8",
@@ -13,8 +24,7 @@ const UPSTREAM_HEADERS = {
   accept: "application/json",
   "user-agent": "position-monitor-service/1.0"
 };
-const REQUIRED_SECRETS = [
-  "PROXY_TOKEN",
+const REQUIRED_EXCHANGE_SECRETS = [
   "BINANCE_API_KEY",
   "BINANCE_API_SECRET",
   "BYBIT_API_KEY",
@@ -91,18 +101,26 @@ export async function handleRequest(request, env = {}, fetchImpl = fetch, webSoc
     });
   }
 
+  if (url.pathname === "/funding") {
+    if (request.method !== "POST") return methodNotAllowed("POST");
+    if (!authorized(request, env.PROXY_TOKEN)) return jsonResponse({ ok: false }, 401);
+    return handleFundingRequest(request, env, fetchImpl, webSocketFactory);
+  }
+
   if (url.pathname !== "/state") return jsonResponse({ ok: false }, 404);
   if (request.method !== "POST") return methodNotAllowed("POST");
   if (!authorized(request, env.PROXY_TOKEN)) return jsonResponse({ ok: false }, 401);
 
-  const missing = REQUIRED_SECRETS.filter((name) => !String(env[name] || "").trim());
+  const body = await readOptionalJson(request);
+  if (body === null) return jsonResponse({ ok: false, reason: "invalid_request" }, 400);
+  const runtimeEnv = withRequestCredentials(env, body);
+  const names = requestedExchanges(body);
+  const missing = requiredSecretsFor(names).filter((name) => !String(runtimeEnv[name] || "").trim());
   if (missing.length > 0) return jsonResponse({ ok: false, reason: "not_configured" }, 503);
 
-  const results = await Promise.allSettled([
-    fetchBinanceState(env, fetchImpl, webSocketFactory),
-    fetchBybitState(env, fetchImpl)
-  ]);
-  const names = ["binance", "bybit"];
+  const results = await Promise.allSettled(names.map((name) => name === "binance"
+    ? fetchBinanceState(runtimeEnv, fetchImpl, webSocketFactory)
+    : fetchBybitState(runtimeEnv, fetchImpl)));
   const failures = results.flatMap((result, index) => result.status === "rejected"
     ? [[names[index], safeFailureCode(result.reason)]]
     : []);
@@ -129,6 +147,405 @@ export async function handleRequest(request, env = {}, fetchImpl = fetch, webSoc
     coverage: Object.fromEntries(results.map((result, index) => [names[index], result.value.coverage])),
     warnings: [...new Set(results.flatMap((result) => result.value.warnings || []))]
   });
+}
+
+async function handleFundingRequest(request, env, fetchImpl, webSocketFactory) {
+  const body = await readOptionalJson(request);
+  if (body === null) return jsonResponse({ ok: false, reason: "invalid_request" }, 400);
+
+  const endTime = Math.floor(numberValue(body?.endTime));
+  const startTime = Math.floor(numberValue(body?.startTime));
+  if (!startTime || !endTime || startTime >= endTime || endTime - startTime > FUNDING_MAX_WINDOW_MS) {
+    return jsonResponse({ ok: false, reason: "invalid_window" }, 400);
+  }
+
+  const runtimeEnv = withRequestCredentials(env, body);
+  const names = requestedExchanges(body);
+  const missing = requiredSecretsFor(names).filter((name) => !String(runtimeEnv[name] || "").trim());
+  if (missing.length > 0) return jsonResponse({ ok: false, reason: "not_configured" }, 503);
+
+  const results = await Promise.allSettled(names.map((name) => name === "binance"
+    ? fetchBinanceFundingState(runtimeEnv, startTime, endTime, fetchImpl, webSocketFactory)
+    : fetchBybitFundingState(runtimeEnv, startTime, endTime, fetchImpl)));
+  const exchanges = {};
+  const failures = {};
+  results.forEach((result, index) => {
+    if (result.status === "fulfilled") exchanges[names[index]] = result.value;
+    else failures[names[index]] = safeFailureCode(result.reason);
+  });
+
+  if (Object.keys(exchanges).length === 0) {
+    return jsonResponse({ ok: false, failures }, 502);
+  }
+  return jsonResponse({
+    ok: true,
+    checkedAt: new Date().toISOString(),
+    exchanges,
+    ...(Object.keys(failures).length > 0 ? { failures } : {})
+  });
+}
+
+async function readOptionalJson(request) {
+  const text = await request.text();
+  if (!text.trim()) return {};
+  try {
+    const value = JSON.parse(text);
+    return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function withRequestCredentials(env, body) {
+  const credentials = body?.credentials;
+  const binance = credentials?.binance;
+  const bybit = credentials?.bybit;
+  return {
+    ...env,
+    BINANCE_API_KEY: String(env.BINANCE_API_KEY || binance?.apiKey || "").trim(),
+    BINANCE_API_SECRET: String(env.BINANCE_API_SECRET || binance?.apiSecret || "").trim(),
+    BYBIT_API_KEY: String(env.BYBIT_API_KEY || bybit?.apiKey || "").trim(),
+    BYBIT_API_SECRET: String(env.BYBIT_API_SECRET || bybit?.apiSecret || "").trim()
+  };
+}
+
+function requestedExchanges(body) {
+  const requested = Array.isArray(body?.exchanges) ? body.exchanges : ["binance", "bybit"];
+  const names = [...new Set(requested.map((name) => String(name).toLowerCase()))]
+    .filter((name) => name === "binance" || name === "bybit");
+  return names.length > 0 ? names : ["binance", "bybit"];
+}
+
+function requiredSecretsFor(names) {
+  return REQUIRED_EXCHANGE_SECRETS.filter((secret) =>
+    names.some((name) => secret.startsWith(`${name.toUpperCase()}_`)));
+}
+
+async function fetchBinanceFundingState(env, startTime, endTime, fetchImpl, webSocketFactory) {
+  const config = { apiKey: env.BINANCE_API_KEY, apiSecret: env.BINANCE_API_SECRET };
+  const [positionPayload, balancePayload, incomeRows] = await Promise.all([
+    binanceWebSocketRequest(config, "v2/account.position", webSocketFactory),
+    binanceWebSocketRequest(config, "v2/account.balance", webSocketFactory).catch(() => null),
+    binanceFundingSignedGet(config, "/fapi/v1/income", {
+      incomeType: "FUNDING_FEE",
+      startTime,
+      endTime,
+      limit: FUNDING_PAGE_LIMIT
+    }, fetchImpl)
+  ]);
+  if (Number(positionPayload?.status) !== 200 || !Array.isArray(positionPayload?.result)) {
+    throw upstreamError(apiFailureCode(positionPayload?.error?.code));
+  }
+
+  const rawPositions = positionPayload.result.filter((row) => numberValue(row.positionAmt) !== 0);
+  const actualBySymbol = new Map();
+  for (const row of asArray(incomeRows)) {
+    const symbol = String(row.symbol || "").toUpperCase();
+    const timestamp = numberValue(row.time);
+    if (!symbol || timestamp < startTime || timestamp > endTime) continue;
+    if (!actualBySymbol.has(symbol)) actualBySymbol.set(symbol, []);
+    actualBySymbol.get(symbol).push({ timestamp, amount: numberValue(row.income) });
+  }
+
+  const scheduleEntries = await Promise.all(rawPositions.map(async (row) => {
+    const symbol = String(row.symbol || "").toUpperCase();
+    try {
+      return [symbol, await fetchBinanceFundingSchedule(symbol, startTime, endTime, fetchImpl)];
+    } catch {
+      return [symbol, []];
+    }
+  }));
+  const scheduleBySymbol = new Map(scheduleEntries);
+
+  const positions = rawPositions.map((row) => {
+    const rawSymbol = String(row.symbol || "").toUpperCase();
+    const actual = (actualBySymbol.get(rawSymbol) || []).sort((a, b) => b.timestamp - a.timestamp);
+    const schedule = scheduleBySymbol.get(rawSymbol) || [];
+    const intervalHours = inferFundingInterval(schedule.length > 1 ? schedule : actual) || 8;
+    const records = buildFundingRecords(actual, schedule, intervalHours, startTime, endTime);
+    const signedSize = numberValue(row.positionAmt);
+    const size = Math.abs(signedSize);
+    const markPrice = numberValue(row.markPrice);
+    return {
+      source: "binance",
+      symbol: normalizeSymbol(rawSymbol),
+      rawSymbol,
+      side: signedSize > 0 ? "long" : "short",
+      currentPrice: markPrice,
+      entryPrice: numberValue(row.entryPrice),
+      positionSize: size,
+      positionValue: Math.abs(numberValue(row.notional)) || size * markPrice,
+      unrealizedPnl: numberValue(row.unRealizedProfit ?? row.unrealizedProfit),
+      count: records.length,
+      fundingIntervalHours: intervalHours,
+      totalFunding: records.reduce((sum, record) => sum + record.amount, 0),
+      fundingRecords: records.map((record) => record.amount),
+      startTime: new Date(startTime).toISOString(),
+      endTime: new Date(endTime).toISOString()
+    };
+  });
+
+  const equity = emptyFundingEquity();
+  for (const row of asArray(balancePayload?.result)) {
+    const asset = String(row.asset || "").toUpperCase();
+    if (asset === "USDT" || asset === "USDC") {
+      equity.futures[asset] = numberValue(row.balance) + numberValue(row.crossUnPnl);
+    }
+  }
+  equity.total = sumFundingEquity(equity);
+  return { equity, positions, orders: [] };
+}
+
+async function fetchBinanceFundingSchedule(symbol, startTime, endTime, fetchImpl) {
+  let lastError;
+  for (const base of BINANCE_FUNDING_BASES) {
+    try {
+      const query = new URLSearchParams({
+        symbol,
+        startTime: String(startTime),
+        endTime: String(endTime),
+        limit: String(FUNDING_PAGE_LIMIT)
+      });
+      const rows = await fetchJson(`${base}/fapi/v1/fundingRate?${query}`, {
+        headers: UPSTREAM_HEADERS
+      }, fetchImpl, "binance");
+      return asArray(rows).map((row) => ({ timestamp: numberValue(row.fundingTime) }))
+        .filter((row) => row.timestamp >= startTime && row.timestamp <= endTime)
+        .sort((a, b) => b.timestamp - a.timestamp);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || upstreamError("network");
+}
+
+async function binanceFundingSignedGet(config, path, params, fetchImpl) {
+  const query = new URLSearchParams(Object.entries({
+    ...params,
+    recvWindow: 5000,
+    timestamp: Date.now()
+  }).map(([key, value]) => [key, String(value)])).toString();
+  const signature = await hmacHex("binance-funding", config.apiSecret, query);
+  let lastError;
+  for (const base of BINANCE_FUNDING_BASES) {
+    try {
+      return await fetchJson(`${base}${path}?${query}&signature=${signature}`, {
+        headers: { ...UPSTREAM_HEADERS, "X-MBX-APIKEY": config.apiKey }
+      }, fetchImpl, "binance");
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || upstreamError("network");
+}
+
+async function fetchBybitFundingState(env, startTime, endTime, fetchImpl) {
+  const config = { apiKey: env.BYBIT_API_KEY, apiSecret: env.BYBIT_API_SECRET };
+  const positionRows = [];
+  const orderRows = [];
+  for (const settleCoin of ["USDT", "USDC"]) {
+    const [positionsJson, ordersJson] = await Promise.all([
+      bybitSignedGet(config, "/v5/position/list", { category: "linear", settleCoin }, fetchImpl),
+      bybitSignedGet(config, "/v5/order/realtime", { category: "linear", settleCoin, limit: 50 }, fetchImpl)
+    ]);
+    positionRows.push(...asArray(positionsJson.result?.list).filter((row) => numberValue(row.size) !== 0));
+    orderRows.push(...asArray(ordersJson.result?.list));
+  }
+
+  const [walletJson, transactionRows] = await Promise.all([
+    bybitSignedGet(config, "/v5/account/wallet-balance", {
+      accountType: "UNIFIED",
+      coin: "USDT,USDC"
+    }, fetchImpl).catch(() => ({ result: { list: [] } })),
+    fetchBybitFundingTransactions(config, startTime, endTime, fetchImpl)
+  ]);
+  const actualBySymbol = new Map();
+  for (const row of transactionRows) {
+    const symbol = String(row.symbol || "").toUpperCase();
+    const timestamp = numberValue(row.transactionTime);
+    if (!symbol || timestamp < startTime || timestamp > endTime) continue;
+    if (!actualBySymbol.has(symbol)) actualBySymbol.set(symbol, []);
+    actualBySymbol.get(symbol).push({ timestamp, amount: numberValue(row.funding) });
+  }
+
+  const metadataEntries = await Promise.all(positionRows.map(async (row) => {
+    const symbol = String(row.symbol || "").toUpperCase();
+    return [symbol, await fetchBybitFundingMetadata(symbol, fetchImpl).catch(() => ({}))];
+  }));
+  const metadataBySymbol = new Map(metadataEntries);
+  const positions = positionRows.map((row) => {
+    const rawSymbol = String(row.symbol || "").toUpperCase();
+    const actual = (actualBySymbol.get(rawSymbol) || []).sort((a, b) => b.timestamp - a.timestamp);
+    const metadata = metadataBySymbol.get(rawSymbol) || {};
+    const intervalHours = metadata.intervalHours || inferFundingInterval(actual) || 8;
+    const schedule = buildFundingSchedule(intervalHours, metadata.nextFundingTime, startTime, endTime);
+    const records = buildFundingRecords(actual, schedule, intervalHours, startTime, endTime);
+    const size = Math.abs(numberValue(row.size));
+    const markPrice = numberValue(row.markPrice);
+    return {
+      source: "bybit",
+      symbol: normalizeSymbol(rawSymbol),
+      rawSymbol,
+      side: String(row.side || "").toLowerCase() === "buy" ? "long" : "short",
+      currentPrice: markPrice,
+      entryPrice: numberValue(row.avgPrice),
+      positionSize: size,
+      positionValue: Math.abs(numberValue(row.positionValue)) || size * markPrice,
+      unrealizedPnl: numberValue(row.unrealisedPnl),
+      count: records.length,
+      fundingIntervalHours: intervalHours,
+      totalFunding: records.reduce((sum, record) => sum + record.amount, 0),
+      fundingRecords: records.map((record) => record.amount),
+      startTime: new Date(startTime).toISOString(),
+      endTime: new Date(endTime).toISOString()
+    };
+  });
+
+  const orders = orderRows.map((row) => {
+    const triggerPrice = numberValue(row.triggerPrice);
+    const limitPrice = numberValue(row.price);
+    const orderType = String(row.orderType || row.stopOrderType || "").toUpperCase();
+    let kind = "LIMIT";
+    if (/TAKE.?PROFIT/.test(orderType)) kind = "TP";
+    else if (/STOP/.test(orderType)) kind = "SL";
+    else if (triggerPrice && !limitPrice) kind = "TRIGGER";
+    return {
+      exchange: "bybit",
+      symbol: normalizeSymbol(row.symbol),
+      side: String(row.side || "").toLowerCase(),
+      price: triggerPrice || limitPrice,
+      triggerPrice,
+      limitPrice,
+      amount: Math.abs(numberValue(row.qty)),
+      kind,
+      orderType
+    };
+  }).filter((row) => row.price > 0 && row.amount > 0);
+
+  const equity = emptyFundingEquity();
+  for (const row of asArray(walletJson.result?.list?.[0]?.coin)) {
+    const coin = String(row.coin || "").toUpperCase();
+    if (coin === "USDT" || coin === "USDC") equity.futures[coin] = numberValue(row.equity);
+  }
+  equity.total = sumFundingEquity(equity);
+  return { equity, positions, orders };
+}
+
+async function fetchBybitFundingTransactions(config, startTime, endTime, fetchImpl) {
+  const rows = [];
+  let cursor = "";
+  for (let page = 0; page < 20; page += 1) {
+    const json = await bybitSignedGet(config, "/v5/account/transaction-log", {
+      accountType: "UNIFIED",
+      category: "linear",
+      type: "SETTLEMENT",
+      startTime,
+      endTime,
+      limit: 50,
+      ...(cursor ? { cursor } : {})
+    }, fetchImpl);
+    rows.push(...asArray(json.result?.list));
+    const nextCursor = String(json.result?.nextPageCursor || "");
+    if (!nextCursor || nextCursor === cursor) break;
+    cursor = nextCursor;
+  }
+  return rows;
+}
+
+async function fetchBybitFundingMetadata(symbol, fetchImpl) {
+  const [instrumentJson, tickerJson] = await Promise.all([
+    fetchJson(`${BYBIT_BASE}/v5/market/instruments-info?${new URLSearchParams({ category: "linear", symbol })}`, {
+      headers: UPSTREAM_HEADERS
+    }, fetchImpl, "bybit"),
+    fetchJson(`${BYBIT_BASE}/v5/market/tickers?${new URLSearchParams({ category: "linear", symbol })}`, {
+      headers: UPSTREAM_HEADERS
+    }, fetchImpl, "bybit")
+  ]);
+  if (instrumentJson.retCode !== 0 || tickerJson.retCode !== 0) throw upstreamError("api_rejected");
+  const instrument = asArray(instrumentJson.result?.list)[0] || {};
+  const ticker = asArray(tickerJson.result?.list)[0] || {};
+  return {
+    intervalHours: closestFundingInterval(numberValue(instrument.fundingInterval) / 60),
+    nextFundingTime: numberValue(ticker.nextFundingTime)
+  };
+}
+
+function buildFundingSchedule(intervalHours, nextFundingTime, startTime, endTime) {
+  const intervalMs = intervalHours * HOUR_MS;
+  if (!intervalMs) return [];
+  let anchor = numberValue(nextFundingTime);
+  if (!anchor) anchor = Math.floor(endTime / intervalMs) * intervalMs;
+  while (anchor > endTime) anchor -= intervalMs;
+  while (anchor + intervalMs <= endTime) anchor += intervalMs;
+  const rows = [];
+  for (let timestamp = anchor; timestamp >= startTime; timestamp -= intervalMs) rows.push({ timestamp });
+  return rows.sort((a, b) => b.timestamp - a.timestamp);
+}
+
+function buildFundingRecords(actual, schedule, intervalHours, startTime, endTime) {
+  const intervalMs = intervalHours * HOUR_MS;
+  let expected = schedule.slice();
+  if (expected.length === 0 && intervalMs) {
+    const anchor = actual[0]?.timestamp || Math.floor(endTime / intervalMs) * intervalMs;
+    for (let timestamp = anchor; timestamp >= startTime; timestamp -= intervalMs) {
+      if (timestamp <= endTime) expected.push({ timestamp });
+    }
+  }
+  const merged = [...new Map(expected.map((row) => [numberValue(row.timestamp), {
+    timestamp: numberValue(row.timestamp),
+    amount: 0
+  }])).values()].filter((row) => row.timestamp >= startTime && row.timestamp <= endTime)
+    .sort((a, b) => b.timestamp - a.timestamp);
+  if (merged.length === 0) return actual;
+
+  for (const record of actual) {
+    let best = null;
+    let distance = Infinity;
+    for (const slot of merged) {
+      const candidate = Math.abs(record.timestamp - slot.timestamp);
+      if (candidate < distance) {
+        distance = candidate;
+        best = slot;
+      }
+    }
+    if (best) best.amount += numberValue(record.amount);
+  }
+  return merged;
+}
+
+function inferFundingInterval(records) {
+  const timestamps = [...new Set(records.map((row) => numberValue(row.timestamp)).filter(Boolean))]
+    .sort((a, b) => a - b);
+  if (timestamps.length < 2) return 0;
+  const counts = new Map();
+  for (let index = 1; index < timestamps.length; index += 1) {
+    const hours = closestFundingInterval((timestamps[index] - timestamps[index - 1]) / HOUR_MS);
+    if (hours > 0 && hours <= 24) counts.set(hours, (counts.get(hours) || 0) + 1);
+  }
+  return [...counts.entries()].sort((left, right) => right[1] - left[1] || left[0] - right[0])[0]?.[0] || 0;
+}
+
+function closestFundingInterval(hours) {
+  if (!hours) return 0;
+  return COMMON_FUNDING_INTERVALS.reduce((closest, candidate) =>
+    Math.abs(candidate - hours) < Math.abs(closest - hours) ? candidate : closest
+  );
+}
+
+function emptyFundingEquity() {
+  return {
+    futures: { USDT: 0, USDC: 0 },
+    spot: { USDT: 0, USDC: 0 },
+    funding: { USDT: 0, USDC: 0 },
+    unrealizedPnl: 0,
+    total: 0
+  };
+}
+
+function sumFundingEquity(equity) {
+  return ["futures", "spot", "funding"].reduce((total, bucket) =>
+    total + numberValue(equity[bucket]?.USDT) + numberValue(equity[bucket]?.USDC), 0
+  );
 }
 
 async function fetchBinanceState(env, fetchImpl, webSocketFactory) {

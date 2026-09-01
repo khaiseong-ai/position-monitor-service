@@ -31,6 +31,9 @@ jobs:
       BACKPACK_API_KEY: ${{ secrets.BACKPACK_API_KEY }}
       BACKPACK_API_SECRET: ${{ secrets.BACKPACK_API_SECRET }}
       HYPERLIQUID_WALLET: ${{ secrets.HYPERLIQUID_WALLET }}
+      POSITION_RELAY_URL: ${{ secrets.POSITION_RELAY_URL }}
+      POSITION_RELAY_TOKEN: ${{ secrets.POSITION_RELAY_TOKEN }}
+      POSITION_RELAY_EXCHANGES: bybit
       FUNDING_SHEET_WEBAPP_URL: ${{ secrets.POSITION_SHEET_WEBAPP_URL }}
       FUNDING_SHEET_SECRET: ${{ secrets.POSITION_SHEET_SECRET }}
 
@@ -40,6 +43,11 @@ jobs:
         with:
           repository: khaiseong-ai/vercel-binance-funding
           ref: main
+
+      - name: Check out automation helpers
+        uses: actions/checkout@v4
+        with:
+          path: .automation
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -52,6 +60,9 @@ jobs:
 
       - name: Validate funding source
         run: npm run check && npm test
+
+      - name: Connect free Cloudflare WARP egress
+        run: bash .automation/scripts/connect-warp.sh
 
       - name: Refresh independent funding Sheet
         run: npm run snapshot:sheet

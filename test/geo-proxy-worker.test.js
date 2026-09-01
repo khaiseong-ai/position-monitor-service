@@ -148,6 +148,158 @@ test("rejects unauthenticated Binance WebSocket diagnostics", async () => {
   assert.deepEqual(await response.json(), { ok: false });
 });
 
+test("rejects unauthenticated funding requests without calling exchanges", async () => {
+  const response = await handleRequest(
+    new Request("https://worker.test/funding", {
+      method: "POST",
+      body: JSON.stringify({ startTime: 1, endTime: 2 })
+    }),
+    ENV,
+    async () => { throw new Error("must not fetch"); },
+    () => { throw new Error("must not open websocket"); }
+  );
+  assert.equal(response.status, 401);
+  assert.deepEqual(await response.json(), { ok: false });
+});
+
+test("returns complete three-day Binance and Bybit funding slots including zero amounts", async () => {
+  const endTime = Date.parse("2026-09-01T00:30:00.000Z");
+  const startTime = endTime - 72 * 60 * 60 * 1000;
+  const latestSlot = Date.parse("2026-09-01T00:00:00.000Z");
+  let bybitTransactionPages = 0;
+
+  const webSocketFactory = () => {
+    const listeners = new Map();
+    queueMicrotask(() => listeners.get("open")?.());
+    return {
+      addEventListener(name, listener) { listeners.set(name, listener); },
+      send(value) {
+        const request = JSON.parse(value);
+        const result = request.method === "v2/account.position"
+          ? [{
+              symbol: "QQQUSDT",
+              positionAmt: "4",
+              markPrice: "720",
+              entryPrice: "710",
+              notional: "2880",
+              unRealizedProfit: "40",
+              accountAlias: "hidden"
+            }]
+          : [{ asset: "USDT", balance: "100", crossUnPnl: "5", privateField: "hidden" }];
+        queueMicrotask(() => listeners.get("message")?.({
+          data: JSON.stringify({ id: request.id, status: 200, result })
+        }));
+      },
+      close() {}
+    };
+  };
+
+  const fetchImpl = async (input) => {
+    const url = new URL(input);
+    if (url.pathname === "/fapi/v1/income") {
+      assert.equal(url.searchParams.get("incomeType"), "FUNDING_FEE");
+      return Response.json([{ symbol: "QQQUSDT", time: latestSlot, income: "0.25" }]);
+    }
+    if (url.pathname === "/fapi/v1/fundingRate") {
+      return Response.json(Array.from({ length: 9 }, (_, index) => ({
+        symbol: "QQQUSDT",
+        fundingTime: latestSlot - index * 8 * 60 * 60 * 1000
+      })));
+    }
+    if (url.pathname === "/v5/position/list") {
+      const list = url.searchParams.get("settleCoin") === "USDT"
+        ? [{
+            symbol: "LABUSDT",
+            side: "Buy",
+            size: "100",
+            markPrice: "15",
+            avgPrice: "14",
+            positionValue: "1500",
+            unrealisedPnl: "100",
+            accountId: "hidden"
+          }]
+        : [];
+      return Response.json({ retCode: 0, result: { list } });
+    }
+    if (url.pathname === "/v5/order/realtime") {
+      return Response.json({ retCode: 0, result: { list: [] } });
+    }
+    if (url.pathname === "/v5/account/wallet-balance") {
+      return Response.json({
+        retCode: 0,
+        result: { list: [{ coin: [{ coin: "USDT", equity: "250" }] }] }
+      });
+    }
+    if (url.pathname === "/v5/account/transaction-log") {
+      bybitTransactionPages += 1;
+      if (!url.searchParams.get("cursor")) {
+        return Response.json({
+          retCode: 0,
+          result: {
+            list: [{ symbol: "LABUSDT", transactionTime: latestSlot, funding: "0" }],
+            nextPageCursor: "next-page"
+          }
+        });
+      }
+      return Response.json({
+        retCode: 0,
+        result: {
+          list: [{
+            symbol: "LABUSDT",
+            transactionTime: latestSlot - 4 * 60 * 60 * 1000,
+            funding: "2"
+          }],
+          nextPageCursor: ""
+        }
+      });
+    }
+    if (url.pathname === "/v5/market/instruments-info") {
+      return Response.json({ retCode: 0, result: { list: [{ fundingInterval: "240" }] } });
+    }
+    if (url.pathname === "/v5/market/tickers") {
+      return Response.json({
+        retCode: 0,
+        result: { list: [{ nextFundingTime: String(latestSlot + 4 * 60 * 60 * 1000) }] }
+      });
+    }
+    throw new Error(`unexpected path ${url.pathname}`);
+  };
+
+  const response = await handleRequest(
+    new Request("https://worker.test/funding", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer test-token",
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        startTime,
+        endTime,
+        credentials: {
+          binance: { apiKey: "binance-key", apiSecret: "binance-secret" },
+          bybit: { apiKey: "bybit-key", apiSecret: "bybit-secret" }
+        }
+      })
+    }),
+    { PROXY_TOKEN: "test-token" },
+    fetchImpl,
+    webSocketFactory
+  );
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.ok, true);
+  assert.deepEqual(Object.keys(body.exchanges).sort(), ["binance", "bybit"]);
+  assert.equal(body.exchanges.binance.positions[0].count, 9);
+  assert.equal(body.exchanges.binance.positions[0].fundingIntervalHours, 8);
+  assert.equal(body.exchanges.binance.positions[0].totalFunding, 0.25);
+  assert.equal(body.exchanges.bybit.positions[0].count, 18);
+  assert.equal(body.exchanges.bybit.positions[0].fundingIntervalHours, 4);
+  assert.equal(body.exchanges.bybit.positions[0].fundingRecords.filter((value) => value === 0).length, 17);
+  assert.equal(body.exchanges.bybit.positions[0].totalFunding, 2);
+  assert.equal(bybitTransactionPages, 2);
+  assert.doesNotMatch(JSON.stringify(body), /privateField|accountAlias|accountId|hidden/);
+});
+
 test("returns only normalized Binance and Bybit state", async () => {
   const fetchImpl = async (input) => {
     const url = new URL(input);
