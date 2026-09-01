@@ -1,0 +1,9 @@
+.env
+.npm-cache
+.vercel-cache
+.vercel-user-data
+node_modules
+test
+work
+*.log
+prod-weekly-*.json

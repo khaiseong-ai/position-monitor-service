@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>套利仓位监控</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div>
+        <h1>套利仓位监控</h1>
+        <p id="meta">等待第一次检查</p>
+      </div>
+      <button id="checkNow">立即检查</button>
+    </header>
+
+    <section class="summary">
+      <div><strong id="positionCount">0</strong><span>仓位</span></div>
+      <div><strong id="alertCount">0</strong><span>告警</span></div>
+      <div><strong id="wsState">-</strong><span>Binance WS</span></div>
+    </section>
+
+    <section class="alerts" id="alerts"></section>
+
+    <section class="panel">
+      <table>
+        <thead>
+          <tr>
+            <th>Symbol</th>
+            <th>Source</th>
+            <th>Side</th>
+            <th class="num">Size</th>
+            <th class="num">Price</th>
+            <th>Orders</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </section>
+
+    <section class="errors" id="errors"></section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

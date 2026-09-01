@@ -1,0 +1,18 @@
+{
+  "name": "position-monitor-service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node local-server.js",
+    "monitor:once": "node scripts/github-monitor.mjs",
+    "check": "node --check local-server.js && node --check scripts/github-monitor.mjs && node --check api/check.js && node --check api/state.js && node --check api/weekly-pnl.js && node --check lib/config.js && node --check lib/exchanges.js && node --check lib/github-monitor.js && node --check lib/weekly-pnl.js && node --check lib/position-utils.js && node --check lib/telegram.js && node --check lib/vercel-shared.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@noble/curves": "2.2.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

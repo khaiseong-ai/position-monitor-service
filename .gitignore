@@ -1,0 +1,11 @@
+.env
+state.json
+*.log
+node_modules/
+.npm-cache/
+.agent-state/
+.vercel-cache/
+.vercel-user-data/
+prod-weekly-*.json
+.vercel/
+work/

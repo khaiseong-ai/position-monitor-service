@@ -1,0 +1,168 @@
+:root {
+  --bg: #f3f5f7;
+  --panel: #fff;
+  --ink: #101828;
+  --muted: #667085;
+  --line: #d0d5dd;
+  --head: #262626;
+  --long: #087443;
+  --short: #c01020;
+  --warn-bg: #fff1f0;
+  --warn-line: #fda29b;
+  --ok-bg: #ecfdf3;
+  --ok-line: #abefc6;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: Arial, "Microsoft YaHei", sans-serif;
+}
+
+.shell {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+h1 {
+  margin: 0 0 6px;
+  font-size: 24px;
+}
+
+p {
+  margin: 0;
+  color: var(--muted);
+}
+
+button {
+  height: 38px;
+  border: 1px solid #175cd3;
+  background: #175cd3;
+  color: white;
+  padding: 0 14px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.summary div, .panel, .alerts > div, .errors {
+  background: var(--panel);
+  border: 1px solid var(--line);
+}
+
+.summary div {
+  padding: 13px;
+}
+
+.summary strong {
+  display: block;
+  font-size: 22px;
+}
+
+.summary span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.alerts {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.alerts > div {
+  padding: 12px;
+  border-color: var(--warn-line);
+  background: var(--warn-bg);
+}
+
+.alerts > div.ok {
+  border-color: var(--ok-line);
+  background: var(--ok-bg);
+}
+
+.alerts strong {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.panel {
+  overflow: auto;
+  max-height: 65vh;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+th {
+  position: sticky;
+  top: 0;
+  height: 42px;
+  background: var(--head);
+  color: #fff;
+  text-align: left;
+  padding: 0 12px;
+}
+
+td {
+  height: 42px;
+  padding: 0 12px;
+  border-top: 1px solid var(--line);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+tbody tr:nth-child(even) td {
+  background: #f8fafc;
+}
+
+.num {
+  text-align: right;
+}
+
+.long {
+  color: var(--long);
+  font-weight: 700;
+}
+
+.short {
+  color: var(--short);
+  font-weight: 700;
+}
+
+.errors {
+  display: none;
+  margin-top: 14px;
+  padding: 12px;
+  color: #b42318;
+  background: #fff8f7;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 720px) {
+  .shell { padding: 12px; }
+  header { align-items: stretch; flex-direction: column; }
+  .summary { grid-template-columns: 1fr; }
+}
