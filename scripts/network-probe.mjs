@@ -21,3 +21,44 @@ for (const [name, url] of endpoints) {
   }
   console.log(`${name}=${result}`);
 }
+
+const relayUrl = String(process.env.POSITION_RELAY_URL || "").trim();
+const relayToken = String(process.env.POSITION_RELAY_TOKEN || "").trim();
+if (relayUrl && relayToken) {
+  let diagnostic = { status: "network" };
+  try {
+    const url = new URL(relayUrl);
+    url.pathname = "/diagnostics/binance-ws";
+    url.search = "";
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { authorization: `Bearer ${relayToken}` },
+      signal: AbortSignal.timeout(30000)
+    });
+    const body = await response.json().catch(() => null);
+    diagnostic = {
+      status: `http_${response.status}`,
+      methods: sanitizeMethods(body?.methods)
+    };
+  } catch {
+    // Do not expose relay or exchange response details in workflow logs.
+  }
+  console.log(`binance_ws_diagnostic=${JSON.stringify(diagnostic)}`);
+}
+
+function sanitizeMethods(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const result = {};
+  for (const [name, item] of Object.entries(value)) {
+    if (!/^[a-z0-9_-]+$/i.test(name) || !item || typeof item !== "object") continue;
+    const status = Number(item.status);
+    const count = Number(item.count);
+    const code = String(item.code || "");
+    result[name] = {
+      status: Number.isInteger(status) ? status : 0,
+      ...(Number.isInteger(count) && count >= 0 ? { count } : {}),
+      ...(/^[a-z0-9_-]+$/i.test(code) ? { code } : {})
+    };
+  }
+  return result;
+}
