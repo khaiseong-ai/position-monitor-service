@@ -62,7 +62,7 @@ test("authenticated Binance WebSocket diagnostic returns sanitized method result
       send(value) {
         const request = JSON.parse(value);
         sentRequests.push(request);
-        const successful = request.method === "account.position";
+        const successful = request.method === "v2/account.position";
         const response = successful
           ? { id: request.id, status: 200, result: [{ symbol: "PRIVATE", positionAmt: "1" }] }
           : { id: request.id, status: 400, error: { code: -1002, msg: "private upstream detail" } };

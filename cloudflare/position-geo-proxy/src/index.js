@@ -77,7 +77,7 @@ export async function handleRequest(request, env = {}, fetchImpl = fetch, webSoc
     };
 
     const diagnostics = {
-      positions: await runDiagnostic("account.position")
+      positions: await runDiagnostic("v2/account.position")
     };
     if (diagnostics.positions.status === 200) {
       diagnostics.openOrders = await runDiagnostic("openOrders.status");
