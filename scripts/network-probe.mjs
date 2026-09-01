@@ -12,10 +12,10 @@ for (const [name, url] of endpoints) {
   let result = "network";
   try {
     const response = await fetch(url, {
-      redirect: "manual",
+      redirect: "follow",
       signal: AbortSignal.timeout(10000)
     });
-    result = `http_${response.status}`;
+    result = `http_${response.status}@${new URL(response.url).hostname}`;
   } catch {
     // The status category is enough for diagnosing runner reachability.
   }
