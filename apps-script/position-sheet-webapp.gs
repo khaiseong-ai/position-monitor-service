@@ -1,5 +1,10 @@
 const POSITION_SPREADSHEET_ID = "1-fhxWIpcplFMON_4hlTm3uQy8JG9RmEgcEgSld4YAoc";
 const POSITION_SECRET_PROPERTY = "POSITION_SHEET_SECRET";
+const POSITION_IGNORE_SHEETS = {
+  ignoreSymbols: "Ignore",
+  orderIgnoreSymbols: "OrderIgnore",
+  missingTpSlIgnoreSymbols: "MissingTpSlIgnore"
+};
 const POSITION_SHEETS = [
   "Summary",
   "Positions",
@@ -32,6 +37,9 @@ function doPost(event) {
     const payload = JSON.parse(event && event.postData && event.postData.contents || "{}");
     const expectedSecret = PropertiesService.getScriptProperties().getProperty(POSITION_SECRET_PROPERTY);
     if (!expectedSecret || String(payload.secret || "") !== expectedSecret) throw new Error("unauthorized");
+    if (payload.action === "readIgnoreConfig") {
+      return jsonResponse_({ ok: true, ignores: readIgnoreConfig_() });
+    }
     if (payload.action !== "writePositionSnapshot") throw new Error("unsupported_action");
 
     const normalizedSheets = validateSnapshot_(payload.sheets);
@@ -43,6 +51,21 @@ function doPost(event) {
   } finally {
     if (locked) lock.releaseLock();
   }
+}
+
+function readIgnoreConfig_() {
+  const workbook = SpreadsheetApp.openById(POSITION_SPREADSHEET_ID);
+  const ignores = {};
+  Object.keys(POSITION_IGNORE_SHEETS).forEach(function(key) {
+    const sheet = workbook.getSheetByName(POSITION_IGNORE_SHEETS[key]);
+    if (!sheet) throw new Error("missing_ignore_sheet");
+    const rowCount = Math.max(sheet.getLastRow() - 1, 0);
+    const values = rowCount > 0
+      ? sheet.getRange(2, 1, rowCount, 1).getValues().map(function(row) { return row[0]; })
+      : [];
+    ignores[key] = Array.from(new Set(values.map(normalizeSymbol_).filter(Boolean)));
+  });
+  return ignores;
 }
 
 function validateSnapshot_(sheets) {
@@ -126,6 +149,19 @@ function formatSnapshotSheet_(sheet, width) {
   for (let column = 1; column <= width; column += 1) {
     sheet.setColumnWidth(column, Math.min(Math.max(sheet.getColumnWidth(column), 90), 360));
   }
+}
+
+function normalizeSymbol_(value) {
+  let normalized = String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[-_\/]/g, "");
+  let previous = "";
+  while (normalized !== previous) {
+    previous = normalized;
+    normalized = normalized.replace(/(STOCK|USDT|USDC|USD|PERP|SWAP)$/g, "");
+  }
+  return normalized;
 }
 
 function jsonResponse_(body) {

@@ -7,6 +7,7 @@ import {
   failedExchangeDiagnostics,
   failedExchangeNames,
   missingRequiredSecrets,
+  readPositionSheetIgnores,
   writePositionSheet
 } from "../lib/github-monitor.js";
 
@@ -22,7 +23,10 @@ function sampleState() {
     ],
     alerts: [{ symbol: "=FORMULA", long: 2, short: 1, diff: 1, reason: "size_mismatch" }],
     orderAlerts: [{ symbol: "BTC", source: "binance", side: "sell", size: 2, currentPrice: 100, orderPrice: 130 }],
-    missingTpSlAlerts: [{ symbol: "BTC", source: "backpack", side: "short", size: 2, currentPrice: 101, reason: "missing_sl" }]
+    missingTpSlAlerts: [{ symbol: "BTC", source: "backpack", side: "short", size: 2, currentPrice: 101, reason: "missing_sl" }],
+    ignoredSymbols: ["DOGE"],
+    orderIgnoredSymbols: ["ETH"],
+    missingTpSlIgnoredSymbols: ["SOL"]
   };
 }
 
@@ -35,6 +39,7 @@ test("builds the original position workbook tabs and protects formula-like text"
   assert.equal(snapshot.sheets.Positions.length, 3);
   assert.equal(snapshot.sheets.Positions.find((row) => row[1] === "binance")[5], 1);
   assert.equal(snapshot.sheets.Alerts[1][0], "'=FORMULA");
+  assert.deepEqual(snapshot.sheets.Summary.find((row) => row[0] === "Ignored Symbols"), ["Ignored Symbols", "DOGE"]);
   assert.deepEqual(snapshot.run.slice(0, 5), ["2026-09-01T12:00:00.000Z", 2, 3, "", "NO"]);
 });
 
@@ -126,5 +131,38 @@ test("posts only the expected multi-tab position payload", async () => {
     action: "writePositionSnapshot",
     sheets: { Summary: [["Key", "Value"]] },
     run: ["checked", 0, 0, "", "NO", ""]
+  });
+});
+
+test("reads and normalizes all three original ignore lists", async () => {
+  let captured;
+  const fetchImpl = async (url, options) => {
+    captured = { url: String(url), options };
+    return {
+      ok: true,
+      json: async () => ({
+        ok: true,
+        ignores: {
+          ignoreSymbols: ["BTC", " BTC ", ""],
+          orderIgnoreSymbols: ["ETH"],
+          missingTpSlIgnoreSymbols: ["SOL"]
+        }
+      })
+    };
+  };
+  const ignores = await readPositionSheetIgnores({
+    url: "https://example.test/exec",
+    secret: "secret",
+    fetchImpl
+  });
+  assert.deepEqual(ignores, {
+    ignoreSymbols: ["BTC"],
+    orderIgnoreSymbols: ["ETH"],
+    missingTpSlIgnoreSymbols: ["SOL"]
+  });
+  assert.equal(captured.url, "https://example.test/exec");
+  assert.deepEqual(JSON.parse(captured.options.body), {
+    secret: "secret",
+    action: "readIgnoreConfig"
   });
 });

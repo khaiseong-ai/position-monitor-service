@@ -6,6 +6,7 @@ import {
   failedExchangeDiagnostics,
   failedExchangeNames,
   missingRequiredSecrets,
+  readPositionSheetIgnores,
   writePositionSheet
 } from "../lib/github-monitor.js";
 import { sendTelegram } from "../lib/telegram.js";
@@ -21,7 +22,15 @@ if (missing.length > 0) {
 
 async function run() {
   const notify = envFlag(process.env.POSITION_NOTIFY);
-  const state = await collectState({ notify: false, source: "github-actions" });
+  const ignores = await readPositionSheetIgnores({
+    url: process.env.POSITION_SHEET_WEBAPP_URL,
+    secret: process.env.POSITION_SHEET_SECRET
+  });
+  const state = await collectState({
+    notify: false,
+    source: "github-actions",
+    ...ignores
+  });
   const config = buildConfig();
 
   if (state.errors.length > 0) {

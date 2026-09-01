@@ -2,8 +2,7 @@ name: Position Monitor
 
 on:
   schedule:
-    - cron: "4,34 * * * *"
-    - cron: "9,14,19,24,29,39,44,49,54,59 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
     inputs:
       notify:
@@ -52,7 +51,7 @@ jobs:
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       POSITION_SHEET_WEBAPP_URL: ${{ secrets.POSITION_SHEET_WEBAPP_URL }}
       POSITION_SHEET_SECRET: ${{ secrets.POSITION_SHEET_SECRET }}
-      POSITION_NOTIFY: ${{ (github.event_name == 'schedule' && github.event.schedule == '4,34 * * * *') || (github.event_name == 'workflow_dispatch' && inputs.notify) }}
+      POSITION_NOTIFY: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.notify) }}
       TOLERANCE: "0"
 
     steps:
