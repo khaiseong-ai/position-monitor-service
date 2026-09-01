@@ -45,6 +45,10 @@ test("public probe returns status categories only", async () => {
     ok: false,
     endpoints: {
       binance: "http_418_retry_120",
+      binanceFapi1: "http_418_retry_120",
+      binanceFapi2: "http_418_retry_120",
+      binanceFapi3: "http_418_retry_120",
+      binanceFapi4: "http_418_retry_120",
       binanceWs: "ws_200",
       bybit: "http_403_access"
     }

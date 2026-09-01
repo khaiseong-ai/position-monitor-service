@@ -1,6 +1,10 @@
 const BINANCE_BASE = "https://fapi.binance.com";
 const BINANCE_PROBE_BASES = [
-  ["binance", "https://fapi.binance.com"]
+  ["binance", "https://fapi.binance.com"],
+  ["binanceFapi1", "https://fapi1.binance.com"],
+  ["binanceFapi2", "https://fapi2.binance.com"],
+  ["binanceFapi3", "https://fapi3.binance.com"],
+  ["binanceFapi4", "https://fapi4.binance.com"]
 ];
 const BINANCE_WS = "wss://ws-fapi.binance.com/ws-fapi/v1";
 const BYBIT_BASE = "https://api.bybit.com";
