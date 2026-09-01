@@ -100,6 +100,42 @@ test("authenticated Binance WebSocket diagnostic returns sanitized method result
   assert.doesNotMatch(JSON.stringify(body), /PRIVATE|private upstream|binance-key|signature/);
 });
 
+test("Binance WebSocket diagnostic stops after a sanitized position connection failure", async () => {
+  let connectionCount = 0;
+  const webSocketFactory = () => {
+    connectionCount += 1;
+    const listeners = new Map();
+    queueMicrotask(() => listeners.get("open")?.());
+    return {
+      addEventListener(name, listener) { listeners.set(name, listener); },
+      send() {
+        queueMicrotask(() => listeners.get("close")?.({ code: 1006, reason: "private detail" }));
+      },
+      close() {}
+    };
+  };
+
+  const response = await handleRequest(
+    new Request("https://worker.test/diagnostics/binance-ws", {
+      method: "POST",
+      headers: { authorization: "Bearer test-token" }
+    }),
+    ENV,
+    async () => { throw new Error("must not fetch"); },
+    webSocketFactory
+  );
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.deepEqual(body, {
+    ok: false,
+    methods: {
+      positions: { status: 0, code: "ws_closed_1006_after_open" }
+    }
+  });
+  assert.equal(connectionCount, 1);
+  assert.doesNotMatch(JSON.stringify(body), /private detail|binance-key|signature/);
+});
+
 test("rejects unauthenticated Binance WebSocket diagnostics", async () => {
   const response = await handleRequest(
     new Request("https://worker.test/diagnostics/binance-ws", { method: "POST" }),

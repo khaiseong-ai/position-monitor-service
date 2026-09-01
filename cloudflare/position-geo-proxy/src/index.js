@@ -63,22 +63,27 @@ export async function handleRequest(request, env = {}, fetchImpl = fetch, webSoc
       .filter((name) => !String(env[name] || "").trim());
     if (missing.length > 0) return jsonResponse({ ok: false, reason: "not_configured" }, 503);
 
-    const config = { apiKey: env.BINANCE_API_KEY, apiSecret: env.BINANCE_API_SECRET };
-    const methods = {
-      positions: "account.position",
-      openOrders: "openOrders.status",
-      openAlgoOrders: "openAlgoOrders.status",
-      algoOrders: "algoOrders.status"
+    const config = {
+      apiKey: String(env.BINANCE_API_KEY).trim(),
+      apiSecret: String(env.BINANCE_API_SECRET).trim()
     };
-    const results = await Promise.all(Object.entries(methods).map(async ([label, method]) => {
+    const runDiagnostic = async (method) => {
       try {
         const payload = await binanceWebSocketRequest(config, method, webSocketFactory);
-        return [label, safeWebSocketDiagnostic(payload)];
+        return safeWebSocketDiagnostic(payload);
       } catch (error) {
-        return [label, { status: 0, code: safeFailureCode(error) }];
+        return { status: 0, code: safeFailureCode(error) };
       }
-    }));
-    const diagnostics = Object.fromEntries(results);
+    };
+
+    const diagnostics = {
+      positions: await runDiagnostic("account.position")
+    };
+    if (diagnostics.positions.status === 200) {
+      diagnostics.openOrders = await runDiagnostic("openOrders.status");
+      diagnostics.openAlgoOrders = await runDiagnostic("openAlgoOrders.status");
+      diagnostics.algoOrders = await runDiagnostic("algoOrders.status");
+    }
 
     return jsonResponse({
       ok: Object.values(diagnostics).every((result) => result.status === 200),
@@ -356,6 +361,7 @@ async function binanceWebSocketRequest(config, method, webSocketFactory) {
   let timer;
   return new Promise((resolve, reject) => {
     let settled = false;
+    let opened = false;
     const finish = (callback, value) => {
       if (settled) return;
       settled = true;
@@ -372,6 +378,7 @@ async function binanceWebSocketRequest(config, method, webSocketFactory) {
       socket = webSocketFactory(BINANCE_WS);
       timer = setTimeout(() => finish(reject, upstreamError("ws_timeout")), 15000);
       socket.addEventListener("open", () => {
+        opened = true;
         socket.send(JSON.stringify({ id, method, params }));
       });
       socket.addEventListener("message", (event) => {
@@ -382,8 +389,17 @@ async function binanceWebSocketRequest(config, method, webSocketFactory) {
           finish(reject, upstreamError("ws_invalid"));
         }
       });
-      socket.addEventListener("error", () => finish(reject, upstreamError("ws_error")));
-      socket.addEventListener("close", () => finish(reject, upstreamError("ws_closed")));
+      socket.addEventListener("error", () => {
+        // The close event carries the useful protocol-level diagnostic code.
+      });
+      socket.addEventListener("close", (event) => {
+        const rawCode = Number(event?.code);
+        const closeCode = Number.isInteger(rawCode) && rawCode >= 1000 && rawCode <= 4999
+          ? rawCode
+          : 0;
+        const phase = opened ? "after_open" : "before_open";
+        finish(reject, upstreamError(`ws_closed_${closeCode}_${phase}`));
+      });
     } catch {
       finish(reject, upstreamError("ws_error"));
     }
