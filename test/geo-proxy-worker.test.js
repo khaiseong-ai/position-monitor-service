@@ -88,8 +88,12 @@ test("dispatches the position workflow without exposing scheduler failures", asy
   assert.equal(captured.options.headers.authorization, "Bearer actions-only-token");
   assert.deepEqual(JSON.parse(captured.options.body), {
     ref: "main",
-    inputs: { notify: true }
+    inputs: { notify: "true" }
   });
+  await dispatchPositionMonitor(
+    { GITHUB_ACTIONS_TOKEN: "actions-only-token" },
+    async () => Response.json({ workflow_run_id: 123 }, { status: 200 })
+  );
   await assert.rejects(() => dispatchPositionMonitor({}, async () => {
     throw new Error("must not call GitHub");
   }), /scheduler is not configured/);

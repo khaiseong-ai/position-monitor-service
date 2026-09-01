@@ -67,9 +67,9 @@ export async function dispatchPositionMonitor(env = {}, fetchImpl = fetch) {
       "user-agent": "position-monitor-scheduler/1.0",
       "x-github-api-version": "2022-11-28"
     },
-    body: JSON.stringify({ ref: "main", inputs: { notify: true } })
+    body: JSON.stringify({ ref: "main", inputs: { notify: "true" } })
   });
-  if (response.status !== 204) {
+  if (![200, 204].includes(response.status)) {
     throw new Error(`GitHub Actions dispatch failed with HTTP ${response.status}`);
   }
 }
