@@ -6,6 +6,9 @@ node_modules/
 .agent-state/
 .vercel-cache/
 .vercel-user-data/
+.wrangler/
+.dev.vars
+.dev.vars.*
 prod-weekly-*.json
 .vercel/
 work/
