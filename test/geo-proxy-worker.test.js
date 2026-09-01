@@ -266,7 +266,7 @@ test("returns complete three-day Binance and Bybit funding slots including zero 
       return Response.json([{ symbol: "QQQUSDT", time: latestSlot, income: "0.25" }]);
     }
     if (url.pathname === "/fapi/v1/fundingRate") {
-      return Response.json(Array.from({ length: 9 }, (_, index) => ({
+      return Response.json(Array.from({ length: 4 }, (_, index) => ({
         symbol: "QQQUSDT",
         fundingTime: latestSlot - index * 8 * 60 * 60 * 1000
       })));

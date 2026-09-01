@@ -495,8 +495,12 @@ function buildFundingSchedule(intervalHours, nextFundingTime, startTime, endTime
 function buildFundingRecords(actual, schedule, intervalHours, startTime, endTime) {
   const intervalMs = intervalHours * HOUR_MS;
   let expected = schedule.slice();
-  if (expected.length === 0 && intervalMs) {
-    const anchor = actual[0]?.timestamp || Math.floor(endTime / intervalMs) * intervalMs;
+  if (intervalMs) {
+    let anchor = expected[0]?.timestamp
+      || actual[0]?.timestamp
+      || Math.floor(endTime / intervalMs) * intervalMs;
+    while (anchor > endTime) anchor -= intervalMs;
+    while (anchor + intervalMs <= endTime) anchor += intervalMs;
     for (let timestamp = anchor; timestamp >= startTime; timestamp -= intervalMs) {
       if (timestamp <= endTime) expected.push({ timestamp });
     }
