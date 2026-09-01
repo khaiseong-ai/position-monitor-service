@@ -99,7 +99,7 @@ export async function handleRequest(request, env = {}, fetchImpl = fetch, webSoc
   if (missing.length > 0) return jsonResponse({ ok: false, reason: "not_configured" }, 503);
 
   const results = await Promise.allSettled([
-    fetchBinanceState(env, fetchImpl),
+    fetchBinanceState(env, fetchImpl, webSocketFactory),
     fetchBybitState(env, fetchImpl)
   ]);
   const names = ["binance", "bybit"];
@@ -125,12 +125,29 @@ export async function handleRequest(request, env = {}, fetchImpl = fetch, webSoc
     ok: true,
     checkedAt: new Date().toISOString(),
     positions: results.flatMap((result) => result.value.positions),
-    orders: results.flatMap((result) => result.value.orders)
+    orders: results.flatMap((result) => result.value.orders),
+    coverage: Object.fromEntries(results.map((result, index) => [names[index], result.value.coverage])),
+    warnings: [...new Set(results.flatMap((result) => result.value.warnings || []))]
   });
 }
 
-async function fetchBinanceState(env, fetchImpl) {
+async function fetchBinanceState(env, fetchImpl, webSocketFactory) {
   const config = { apiKey: env.BINANCE_API_KEY, apiSecret: env.BINANCE_API_SECRET };
+  if (String(env.BINANCE_WS_POSITIONS_ONLY || "").toLowerCase() === "true") {
+    return fetchBinanceWebSocketState(config, webSocketFactory);
+  }
+  try {
+    return await fetchBinanceRestState(config, fetchImpl);
+  } catch (restError) {
+    try {
+      return await fetchBinanceWebSocketState(config, webSocketFactory);
+    } catch {
+      throw restError;
+    }
+  }
+}
+
+async function fetchBinanceRestState(config, fetchImpl) {
   const [positionRows, openOrderRows, algoOrderRows] = await Promise.all([
     binanceSignedGet(config, "/fapi/v3/positionRisk", fetchImpl),
     binanceSignedGet(config, "/fapi/v1/openOrders", fetchImpl),
@@ -156,7 +173,32 @@ async function fetchBinanceState(env, fetchImpl) {
     status: row.status || row.orderStatus
   })).filter(Boolean);
 
-  return { positions, orders };
+  return {
+    positions,
+    orders,
+    coverage: { positions: "complete", orders: "complete", transport: "rest" },
+    warnings: []
+  };
+}
+
+async function fetchBinanceWebSocketState(config, webSocketFactory) {
+  const payload = await binanceWebSocketRequest(config, "v2/account.position", webSocketFactory);
+  if (Number(payload?.status) !== 200 || !Array.isArray(payload?.result)) {
+    throw upstreamError(apiFailureCode(payload?.error?.code));
+  }
+  const positions = payload.result.map((row) => normalizePosition({
+    symbol: row.symbol,
+    source: "binance",
+    side: numberValue(row.positionAmt) > 0 ? "long" : "short",
+    size: row.positionAmt,
+    price: row.markPrice
+  })).filter(Boolean);
+  return {
+    positions,
+    orders: [],
+    coverage: { positions: "complete", orders: "unavailable", transport: "websocket" },
+    warnings: ["binance_orders_unavailable"]
+  };
 }
 
 async function binanceSignedGet(config, path, fetchImpl) {
@@ -199,7 +241,12 @@ async function fetchBybitState(env, fetchImpl) {
     })).filter(Boolean));
   }
 
-  return { positions, orders };
+  return {
+    positions,
+    orders,
+    coverage: { positions: "complete", orders: "complete", transport: "rest" },
+    warnings: []
+  };
 }
 
 async function bybitSignedGet(config, path, params, fetchImpl) {

@@ -7,7 +7,7 @@
     "start": "node local-server.js",
     "relay:start": "node render/position-geo-proxy/server.mjs",
     "monitor:once": "node scripts/github-monitor.mjs",
-    "check": "node --check local-server.js && node --check scripts/github-monitor.mjs && node --check scripts/network-probe.mjs && node --check api/check.js && node --check api/state.js && node --check api/weekly-pnl.js && node --check lib/config.js && node --check lib/exchanges.js && node --check lib/github-monitor.js && node --check lib/weekly-pnl.js && node --check lib/position-utils.js && node --check lib/telegram.js && node --check lib/vercel-shared.js && node --check cloudflare/position-geo-proxy/src/index.js && node --check render/position-geo-proxy/server.mjs",
+    "check": "node --check local-server.js && node --check scripts/github-monitor.mjs && node --check scripts/network-probe.mjs && node --check api/check.js && node --check api/state.js && node --check api/weekly-pnl.js && node --check lib/config.js && node --check lib/exchanges.js && node --check lib/github-monitor.js && node --check lib/position-relay.js && node --check lib/weekly-pnl.js && node --check lib/position-utils.js && node --check lib/telegram.js && node --check lib/vercel-shared.js && node --check cloudflare/position-geo-proxy/src/index.js && node --check render/position-geo-proxy/server.mjs",
     "test": "node --test"
   },
   "dependencies": {

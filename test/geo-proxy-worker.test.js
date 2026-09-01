@@ -197,6 +197,94 @@ test("returns only normalized Binance and Bybit state", async () => {
   assert.doesNotMatch(JSON.stringify(body), /private|accountAlias|accountId/);
 });
 
+test("falls back to Binance WebSocket positions and marks order coverage unavailable", async () => {
+  const webSocketFactory = () => {
+    const listeners = new Map();
+    queueMicrotask(() => listeners.get("open")?.());
+    return {
+      addEventListener(name, listener) { listeners.set(name, listener); },
+      send(value) {
+        const request = JSON.parse(value);
+        queueMicrotask(() => listeners.get("message")?.({
+          data: JSON.stringify({
+            id: request.id,
+            status: 200,
+            result: [
+              { symbol: "BTCUSDT", positionAmt: "2", markPrice: "100", privateField: "hidden" },
+              { symbol: "ETHUSDT", positionAmt: "0", markPrice: "10" }
+            ]
+          })
+        }));
+      },
+      close() {}
+    };
+  };
+  const response = await handleRequest(
+    new Request("https://worker.test/state", {
+      method: "POST",
+      headers: { authorization: "Bearer test-token" }
+    }),
+    ENV,
+    async (input) => {
+      const url = new URL(input);
+      if (url.hostname.includes("binance")) {
+        return Response.json({ code: -1003, msg: "private rate-limit detail" }, { status: 429 });
+      }
+      return Response.json({ retCode: 0, result: { list: [] } });
+    },
+    webSocketFactory
+  );
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.ok, true);
+  assert.deepEqual(body.positions, [
+    { symbol: "BTC", source: "binance", side: "long", size: 2, price: 100 }
+  ]);
+  assert.deepEqual(body.orders, []);
+  assert.deepEqual(body.coverage, {
+    binance: { positions: "complete", orders: "unavailable", transport: "websocket" },
+    bybit: { positions: "complete", orders: "complete", transport: "rest" }
+  });
+  assert.deepEqual(body.warnings, ["binance_orders_unavailable"]);
+  assert.doesNotMatch(JSON.stringify(body), /private|rate-limit detail/);
+});
+
+test("explicit Binance WebSocket mode skips banned REST requests", async () => {
+  let binanceRestCalls = 0;
+  const webSocketFactory = () => {
+    const listeners = new Map();
+    queueMicrotask(() => listeners.get("open")?.());
+    return {
+      addEventListener(name, listener) { listeners.set(name, listener); },
+      send(value) {
+        const request = JSON.parse(value);
+        queueMicrotask(() => listeners.get("message")?.({
+          data: JSON.stringify({ id: request.id, status: 200, result: [] })
+        }));
+      },
+      close() {}
+    };
+  };
+  const response = await handleRequest(
+    new Request("https://worker.test/state", {
+      method: "POST",
+      headers: { authorization: "Bearer test-token" }
+    }),
+    { ...ENV, BINANCE_WS_POSITIONS_ONLY: "true" },
+    async (input) => {
+      if (new URL(input).hostname.includes("binance")) {
+        binanceRestCalls += 1;
+        throw new Error("must not call Binance REST");
+      }
+      return Response.json({ retCode: 0, result: { list: [] } });
+    },
+    webSocketFactory
+  );
+  assert.equal(response.status, 200);
+  assert.equal(binanceRestCalls, 0);
+  assert.equal((await response.json()).coverage.binance.transport, "websocket");
+});
+
 test("fails closed with exchange names and no upstream details", async () => {
   const response = await handleRequest(
     new Request("https://worker.test/state", {
@@ -213,7 +301,8 @@ test("fails closed with exchange names and no upstream details", async () => {
         );
       }
       return Response.json({ retCode: 0, result: { list: [] } });
-    }
+    },
+    () => { throw new Error("websocket unavailable"); }
   );
   assert.equal(response.status, 502);
   const body = await response.json();

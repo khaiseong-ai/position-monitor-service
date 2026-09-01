@@ -24,18 +24,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      BINANCE_API_KEY: ${{ secrets.BINANCE_API_KEY }}
-      BINANCE_API_SECRET: ${{ secrets.BINANCE_API_SECRET }}
-      BINANCE_REST_BASE: https://fapi.binance.com
-      BINANCE_WS_ENABLED: "false"
+      POSITION_RELAY_URL: ${{ secrets.POSITION_RELAY_URL }}
+      POSITION_RELAY_TOKEN: ${{ secrets.POSITION_RELAY_TOKEN }}
+      POSITION_RELAY_EXCHANGES: binance,bybit
       MEXC_API_KEY: ${{ secrets.MEXC_API_KEY }}
       MEXC_API_SECRET: ${{ secrets.MEXC_API_SECRET }}
       MEXC_REST_BASE: https://contract.mexc.com
       MEXC_SIZE_MULTIPLIERS: ${{ secrets.MEXC_SIZE_MULTIPLIERS }}
-      BYBIT_API_KEY: ${{ secrets.BYBIT_API_KEY }}
-      BYBIT_API_SECRET: ${{ secrets.BYBIT_API_SECRET }}
-      BYBIT_REST_BASE: https://api.bybit.com
-      BYBIT_SETTLE_COINS: USDT,USDC
       BITGET_API_KEY: ${{ secrets.BITGET_API_KEY }}
       BITGET_API_SECRET: ${{ secrets.BITGET_API_SECRET }}
       BITGET_API_PASSPHRASE: ${{ secrets.BITGET_API_PASSPHRASE }}

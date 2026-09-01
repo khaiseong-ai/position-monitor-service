@@ -35,6 +35,20 @@ test("builds a flat sheet snapshot and protects formula-like text", () => {
   assert.equal(rows.find((row) => row[1] === "POSITION" && row[3] === "binance")[8], 200);
 });
 
+test("writes degraded relay coverage into the status snapshot", () => {
+  const state = sampleState();
+  state.integrity = {
+    coverage: {
+      binance: { positions: "complete", orders: "unavailable", transport: "websocket" }
+    },
+    warnings: ["binance_orders_unavailable"]
+  };
+  const rows = buildSheetRows(state);
+  assert.match(rows[1][11], /Degraded; binance_orders_unavailable/);
+  assert.deepEqual(rows.find((row) => row[1] === "COVERAGE").slice(1, 4), ["COVERAGE", "", "binance"]);
+  assert.match(rows.find((row) => row[1] === "COVERAGE")[11], /orders=unavailable/);
+});
+
 test("reduces exchange failures to safe labels", () => {
   const errors = [
     "bybit: bybit HTTP 401: private response",
@@ -70,6 +84,15 @@ test("requires all monitoring credentials without exposing values", () => {
   assert.deepEqual(missingRequiredSecrets(env), []);
   delete env.BYBIT_API_SECRET;
   assert.deepEqual(missingRequiredSecrets(env), ["BYBIT_API_SECRET"]);
+
+  delete env.BINANCE_API_KEY;
+  delete env.BINANCE_API_SECRET;
+  delete env.BYBIT_API_KEY;
+  env.POSITION_RELAY_URL = "https://relay.example.test/state";
+  env.POSITION_RELAY_TOKEN = "configured";
+  assert.deepEqual(missingRequiredSecrets(env), []);
+  delete env.POSITION_RELAY_TOKEN;
+  assert.deepEqual(missingRequiredSecrets(env), ["POSITION_RELAY_TOKEN"]);
 });
 
 test("parses notification flags", () => {

@@ -40,6 +40,10 @@ async function run() {
     return;
   }
 
+  if (state.integrity?.warnings?.length > 0) {
+    console.warn(`Monitor running with degraded coverage: ${state.integrity.warnings.join(", ")}`);
+  }
+
   const rows = buildSheetRows(state);
   await writePositionSheet({
     url: process.env.POSITION_SHEET_WEBAPP_URL,
