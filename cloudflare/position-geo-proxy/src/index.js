@@ -692,13 +692,22 @@ async function fetchBinancePositionScopedState(config, fetchImpl, webSocketFacto
     price: row.markPrice
   })).filter(Boolean);
   const symbols = [...new Set(activeRows.map((row) => String(row.symbol || "").trim().toUpperCase()).filter(Boolean))];
-  const orderResults = await Promise.allSettled(symbols.flatMap((symbol) => [
-    binanceSignedGet(config, "/fapi/v1/openOrders", fetchImpl, { symbol }),
-    binanceSignedGet(config, "/fapi/v1/openAlgoOrders", fetchImpl, { symbol })
-  ]));
-  const orderFailures = orderResults.filter((result) => result.status === "rejected");
-  const orderRows = orderResults.flatMap((result) => result.status === "fulfilled" ? asArray(result.value) : []);
-  const ordersComplete = orderFailures.length === 0;
+  let orderRows = [];
+  let ordersComplete = false;
+  try {
+    orderRows = await fetchBinanceOrderRows(config, fetchImpl);
+    ordersComplete = true;
+  } catch {
+    let orderFailures = 0;
+    for (const symbol of symbols) {
+      try {
+        orderRows.push(...await fetchBinanceOrderRows(config, fetchImpl, { symbol }));
+      } catch {
+        orderFailures += 1;
+      }
+    }
+    ordersComplete = symbols.length > 0 && orderFailures === 0;
+  }
   return {
     positions,
     orders: normalizeBinanceOrders(orderRows),
@@ -709,6 +718,14 @@ async function fetchBinancePositionScopedState(config, fetchImpl, webSocketFacto
     },
     warnings: ordersComplete ? [] : ["binance_orders_unavailable"]
   };
+}
+
+async function fetchBinanceOrderRows(config, fetchImpl, params = {}) {
+  const rows = [];
+  for (const path of ["/fapi/v1/openOrders", "/fapi/v1/openAlgoOrders"]) {
+    rows.push(...asArray(await binanceSignedGet(config, path, fetchImpl, params)));
+  }
+  return rows;
 }
 
 async function fetchBinanceWebSocketState(config, webSocketFactory) {

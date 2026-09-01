@@ -604,7 +604,7 @@ test("keeps Binance positions available when every order transport is unavailabl
   assert.deepEqual(body.warnings, ["binance_orders_unavailable"]);
 });
 
-test("explicit Binance WebSocket mode uses only position-scoped order REST requests", async () => {
+test("explicit Binance WebSocket mode gets complete account orders through REST", async () => {
   const binanceRestCalls = [];
   const webSocketFactory = () => {
     const listeners = new Map();
@@ -631,8 +631,19 @@ test("explicit Binance WebSocket mode uses only position-scoped order REST reque
     }),
     { ...ENV, BINANCE_WS_POSITIONS_ONLY: "true" },
     async (input) => {
-      if (new URL(input).hostname.includes("binance")) {
-        binanceRestCalls.push(new URL(input));
+      const url = new URL(input);
+      if (url.hostname.includes("binance")) {
+        binanceRestCalls.push(url);
+        if (url.pathname === "/fapi/v1/openAlgoOrders") {
+          return Response.json([{
+            symbol: "SOLUSDT",
+            side: "BUY",
+            quantity: "3",
+            triggerPrice: "90",
+            orderType: "STOP_MARKET",
+            algoStatus: "NEW"
+          }]);
+        }
         return Response.json([]);
       }
       return Response.json({ retCode: 0, result: { list: [] } });
@@ -641,12 +652,23 @@ test("explicit Binance WebSocket mode uses only position-scoped order REST reque
   );
   assert.equal(response.status, 200);
   assert.equal(binanceRestCalls.length, 2);
-  assert.ok(binanceRestCalls.every((url) => url.searchParams.get("symbol") === "BTCUSDT"));
+  assert.ok(binanceRestCalls.every((url) => !url.searchParams.has("symbol")));
   assert.deepEqual(binanceRestCalls.map((url) => url.pathname).sort(), [
     "/fapi/v1/openAlgoOrders",
     "/fapi/v1/openOrders"
   ]);
-  assert.deepEqual((await response.json()).coverage.binance, {
+  const body = await response.json();
+  assert.deepEqual(body.orders, [{
+    symbol: "SOL",
+    source: "binance",
+    side: "buy",
+    size: 3,
+    price: 0,
+    triggerPrice: 90,
+    type: "STOP_MARKET",
+    status: "NEW"
+  }]);
+  assert.deepEqual(body.coverage.binance, {
     positions: "complete",
     orders: "complete",
     transport: "websocket"
