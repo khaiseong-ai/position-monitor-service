@@ -2,8 +2,8 @@ name: Position Monitor
 
 on:
   schedule:
-    - cron: "2,32 * * * *"
-    - cron: "7,12,17,22,27,37,42,47,52,57 * * * *"
+    - cron: "4,34 * * * *"
+    - cron: "9,14,19,24,29,39,44,49,54,59 * * * *"
   workflow_dispatch:
     inputs:
       notify:
@@ -53,7 +53,7 @@ jobs:
       POSITION_SHEET_WEBAPP_URL: ${{ secrets.POSITION_SHEET_WEBAPP_URL }}
       POSITION_SHEET_SECRET: ${{ secrets.POSITION_SHEET_SECRET }}
       POSITION_SHEET_NAME: Position_Monitor
-      POSITION_NOTIFY: ${{ (github.event_name == 'schedule' && github.event.schedule == '2,32 * * * *') || (github.event_name == 'workflow_dispatch' && inputs.notify) }}
+      POSITION_NOTIFY: ${{ (github.event_name == 'schedule' && github.event.schedule == '4,34 * * * *') || (github.event_name == 'workflow_dispatch' && inputs.notify) }}
       TOLERANCE: "0"
 
     steps:
