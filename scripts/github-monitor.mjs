@@ -1,7 +1,7 @@
 import { buildConfig } from "../lib/config.js";
 import {
   buildFailureMessage,
-  buildSheetRows,
+  buildPositionSheetSnapshot,
   envFlag,
   failedExchangeDiagnostics,
   failedExchangeNames,
@@ -44,24 +44,33 @@ async function run() {
     console.warn(`Monitor running with degraded coverage: ${state.integrity.warnings.join(", ")}`);
   }
 
-  const rows = buildSheetRows(state);
-  await writePositionSheet({
-    url: process.env.POSITION_SHEET_WEBAPP_URL,
-    secret: process.env.POSITION_SHEET_SECRET,
-    sheetName: process.env.POSITION_SHEET_NAME || "Position_Monitor",
-    rows
-  });
-  console.log(`Sheet updated: ${state.positions.length} position(s), ${state.orders.length} order(s), ${rows.length - 2} detail row(s).`);
-
   const alertCount = state.alerts.length + state.orderAlerts.length + state.missingTpSlAlerts.length;
+  let telegramSent = false;
+  let telegramError = "";
   if (notify && alertCount > 0) {
     const { buildAlertMessage } = await import("../lib/telegram.js");
-    await sendTelegram(
-      config.telegram,
-      buildAlertMessage(state.alerts, "github-actions", state.orderAlerts, state.missingTpSlAlerts)
-    );
-    console.log(`Telegram alert sent for ${alertCount} alert(s).`);
+    try {
+      await sendTelegram(
+        config.telegram,
+        buildAlertMessage(state.alerts, "github-actions", state.orderAlerts, state.missingTpSlAlerts)
+      );
+      telegramSent = true;
+      console.log(`Telegram alert sent for ${alertCount} alert(s).`);
+    } catch {
+      telegramError = "Telegram delivery failed";
+      console.error(telegramError);
+    }
   } else {
     console.log(`Telegram alert not required; notify=${notify}, alerts=${alertCount}.`);
   }
+
+  const snapshot = buildPositionSheetSnapshot(state, { telegramSent, telegramError });
+  await writePositionSheet({
+    url: process.env.POSITION_SHEET_WEBAPP_URL,
+    secret: process.env.POSITION_SHEET_SECRET,
+    snapshot
+  });
+  console.log(`Position Sheet updated: ${state.positions.length} position(s), ${state.orders.length} order(s), ${alertCount} alert(s).`);
+
+  if (telegramError) process.exitCode = 1;
 }

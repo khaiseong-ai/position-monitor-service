@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildFailureMessage,
-  buildSheetRows,
+  buildPositionSheetSnapshot,
   envFlag,
   failedExchangeDiagnostics,
   failedExchangeNames,
@@ -26,13 +26,16 @@ function sampleState() {
   };
 }
 
-test("builds a flat sheet snapshot and protects formula-like text", () => {
-  const rows = buildSheetRows(sampleState());
-  assert.equal(rows[0].length, 12);
-  assert.equal(rows[1][1], "STATUS");
-  assert.equal(rows.filter((row) => row[1] === "POSITION").length, 2);
-  assert.equal(rows.find((row) => row[1] === "POSITION_ALERT")[2], "'=FORMULA");
-  assert.equal(rows.find((row) => row[1] === "POSITION" && row[3] === "binance")[8], 200);
+test("builds the original position workbook tabs and protects formula-like text", () => {
+  const snapshot = buildPositionSheetSnapshot(sampleState());
+  assert.deepEqual(Object.keys(snapshot.sheets), [
+    "Summary", "Positions", "Orders", "Alerts", "OrderAlerts", "MissingTpSlAlerts"
+  ]);
+  assert.deepEqual(snapshot.sheets.Positions[0], ["Symbol", "Source", "Side", "Size", "Price", "Orders"]);
+  assert.equal(snapshot.sheets.Positions.length, 3);
+  assert.equal(snapshot.sheets.Positions.find((row) => row[1] === "binance")[5], 1);
+  assert.equal(snapshot.sheets.Alerts[1][0], "'=FORMULA");
+  assert.deepEqual(snapshot.run.slice(0, 5), ["2026-09-01T12:00:00.000Z", 2, 3, "", "NO"]);
 });
 
 test("writes degraded relay coverage into the status snapshot", () => {
@@ -43,10 +46,10 @@ test("writes degraded relay coverage into the status snapshot", () => {
     },
     warnings: ["binance_orders_unavailable"]
   };
-  const rows = buildSheetRows(state);
-  assert.match(rows[1][11], /Degraded; binance_orders_unavailable/);
-  assert.deepEqual(rows.find((row) => row[1] === "COVERAGE").slice(1, 4), ["COVERAGE", "", "binance"]);
-  assert.match(rows.find((row) => row[1] === "COVERAGE")[11], /orders=unavailable/);
+  const snapshot = buildPositionSheetSnapshot(state);
+  assert.deepEqual(snapshot.sheets.Summary.find((row) => row[0] === "Status"), ["Status", "Degraded"]);
+  assert.match(snapshot.sheets.Summary.find((row) => row[0] === "Integrity Warnings")[1], /binance_orders_unavailable/);
+  assert.match(snapshot.sheets.Summary.find((row) => row[0] === "Coverage binance")[1], /orders=unavailable/);
 });
 
 test("reduces exchange failures to safe labels", () => {
@@ -101,7 +104,7 @@ test("parses notification flags", () => {
   assert.equal(envFlag("false"), false);
 });
 
-test("posts only the expected writeSheet payload", async () => {
+test("posts only the expected multi-tab position payload", async () => {
   let captured;
   const fetchImpl = async (url, options) => {
     captured = { url: String(url), options };
@@ -110,16 +113,18 @@ test("posts only the expected writeSheet payload", async () => {
   await writePositionSheet({
     url: "https://example.test/exec",
     secret: "secret",
-    sheetName: "Position_Monitor",
-    rows: [["header"]],
+    snapshot: {
+      sheets: { Summary: [["Key", "Value"]] },
+      run: ["checked", 0, 0, "", "NO", ""]
+    },
     fetchImpl
   });
   const payload = JSON.parse(captured.options.body);
   assert.equal(captured.url, "https://example.test/exec");
   assert.deepEqual(payload, {
     secret: "secret",
-    action: "writeSheet",
-    sheetName: "Position_Monitor",
-    rows: [["header"]]
+    action: "writePositionSnapshot",
+    sheets: { Summary: [["Key", "Value"]] },
+    run: ["checked", 0, 0, "", "NO", ""]
   });
 });

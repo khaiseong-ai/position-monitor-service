@@ -30,7 +30,7 @@ Vercel 版本只使用 REST，不使用 WebSocket。Hobby 账号不能使用每 
 
 ## GitHub Actions 常驻检查
 
-`.github/workflows/position-monitor.yml` 可在电脑关机时每 5 分钟执行一次 REST 检查，并把最新成功快照覆盖到 Google Sheet 的 `Position_Monitor` 分页。每 30 分钟的检查也会发送当前 Telegram 告警。
+`.github/workflows/position-monitor.yml` 可在电脑关机时每 5 分钟执行一次 REST 检查，并把最新成功快照分别写入仓位监控 Google Sheet 的 `Summary`、`Positions`、`Orders`、`Alerts`、`OrderAlerts` 和 `MissingTpSlAlerts` 分页；`Runs` 会保留每次成功写入的记录。每 30 分钟的检查也会发送当前 Telegram 告警。
 
 仓库 Secrets 必须包含 `.env.example` 中的交易所、Telegram 和 `POSITION_SHEET_*` 凭证。任务遇到任一交易所错误时会失败关闭：不覆盖 Sheet，只在通知轮次发送不含 API 回应或仓位资料的健康告警。
 
