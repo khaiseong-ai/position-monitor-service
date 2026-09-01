@@ -635,13 +635,13 @@ function sumFundingEquity(equity) {
 async function fetchBinanceState(env, fetchImpl, webSocketFactory) {
   const config = { apiKey: env.BINANCE_API_KEY, apiSecret: env.BINANCE_API_SECRET };
   if (String(env.BINANCE_WS_POSITIONS_ONLY || "").toLowerCase() === "true") {
-    return fetchBinanceWebSocketState(config, webSocketFactory);
+    return fetchBinancePositionScopedState(config, fetchImpl, webSocketFactory);
   }
   try {
     return await fetchBinanceRestState(config, fetchImpl);
   } catch (restError) {
     try {
-      return await fetchBinanceHybridState(config, fetchImpl, webSocketFactory);
+      return await fetchBinancePositionScopedState(config, fetchImpl, webSocketFactory);
     } catch {
       try {
         return await fetchBinanceWebSocketState(config, webSocketFactory);
@@ -677,29 +677,37 @@ async function fetchBinanceRestState(config, fetchImpl) {
   };
 }
 
-async function fetchBinanceHybridState(config, fetchImpl, webSocketFactory) {
-  const [positionPayload, openOrderRows, algoOrderRows] = await Promise.all([
-    binanceWebSocketRequest(config, "v2/account.position", webSocketFactory),
-    binanceWebSocketArray(config, "openOrders.status", webSocketFactory)
-      .catch(() => binanceSignedGet(config, "/fapi/v1/openOrders", fetchImpl)),
-    binanceSignedGet(config, "/fapi/v1/openAlgoOrders", fetchImpl)
-  ]);
+async function fetchBinancePositionScopedState(config, fetchImpl, webSocketFactory) {
+  const positionPayload = await binanceWebSocketRequest(config, "v2/account.position", webSocketFactory);
   if (Number(positionPayload?.status) !== 200 || !Array.isArray(positionPayload?.result)) {
     throw upstreamError(apiFailureCode(positionPayload?.error?.code));
   }
 
-  const positions = positionPayload.result.map((row) => normalizePosition({
+  const activeRows = positionPayload.result.filter((row) => numberValue(row.positionAmt) !== 0);
+  const positions = activeRows.map((row) => normalizePosition({
     symbol: row.symbol,
     source: "binance",
     side: numberValue(row.positionAmt) > 0 ? "long" : "short",
     size: row.positionAmt,
     price: row.markPrice
   })).filter(Boolean);
+  const symbols = [...new Set(activeRows.map((row) => String(row.symbol || "").trim().toUpperCase()).filter(Boolean))];
+  const orderResults = await Promise.allSettled(symbols.flatMap((symbol) => [
+    binanceSignedGet(config, "/fapi/v1/openOrders", fetchImpl, { symbol }),
+    binanceSignedGet(config, "/fapi/v1/openAlgoOrders", fetchImpl, { symbol })
+  ]));
+  const orderFailures = orderResults.filter((result) => result.status === "rejected");
+  const orderRows = orderResults.flatMap((result) => result.status === "fulfilled" ? asArray(result.value) : []);
+  const ordersComplete = orderFailures.length === 0;
   return {
     positions,
-    orders: normalizeBinanceOrders([...asArray(openOrderRows), ...asArray(algoOrderRows)]),
-    coverage: { positions: "complete", orders: "complete", transport: "websocket" },
-    warnings: []
+    orders: normalizeBinanceOrders(orderRows),
+    coverage: {
+      positions: "complete",
+      orders: ordersComplete ? "complete" : "unavailable",
+      transport: "websocket"
+    },
+    warnings: ordersComplete ? [] : ["binance_orders_unavailable"]
   };
 }
 
@@ -723,11 +731,12 @@ async function fetchBinanceWebSocketState(config, webSocketFactory) {
   };
 }
 
-async function binanceSignedGet(config, path, fetchImpl) {
-  const query = new URLSearchParams({
-    timestamp: String(Date.now()),
-    recvWindow: "5000"
-  }).toString();
+async function binanceSignedGet(config, path, fetchImpl, params = {}) {
+  const query = new URLSearchParams(Object.entries({
+    ...params,
+    timestamp: Date.now(),
+    recvWindow: 5000
+  }).map(([key, value]) => [key, String(value)])).toString();
   const signature = await hmacHex("binance", config.apiSecret, query);
   let lastError;
   for (const base of BINANCE_REST_BASES) {
@@ -740,14 +749,6 @@ async function binanceSignedGet(config, path, fetchImpl) {
     }
   }
   throw lastError || upstreamError("network");
-}
-
-async function binanceWebSocketArray(config, method, webSocketFactory) {
-  const payload = await binanceWebSocketRequest(config, method, webSocketFactory);
-  if (Number(payload?.status) !== 200 || !Array.isArray(payload?.result)) {
-    throw upstreamError(apiFailureCode(payload?.error?.code));
-  }
-  return payload.result;
 }
 
 function normalizeBinanceOrders(rows) {

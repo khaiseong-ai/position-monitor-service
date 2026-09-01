@@ -489,7 +489,7 @@ test("returns only normalized Binance and Bybit state", async () => {
   assert.doesNotMatch(JSON.stringify(body), /private|accountAlias|accountId/);
 });
 
-test("falls back to Binance hybrid transport with complete regular and algo orders", async () => {
+test("falls back to position-scoped Binance order requests", async () => {
   const webSocketFactory = () => {
     const listeners = new Map();
     queueMicrotask(() => listeners.get("open")?.());
@@ -497,12 +497,10 @@ test("falls back to Binance hybrid transport with complete regular and algo orde
       addEventListener(name, listener) { listeners.set(name, listener); },
       send(value) {
         const request = JSON.parse(value);
-        const result = request.method === "v2/account.position"
-          ? [
-            { symbol: "BTCUSDT", positionAmt: "2", markPrice: "100", privateField: "hidden" },
-            { symbol: "ETHUSDT", positionAmt: "0", markPrice: "10" }
-          ]
-          : [{ symbol: "BTCUSDT", side: "SELL", origQty: "2", price: "130", type: "LIMIT", status: "NEW" }];
+        const result = [
+          { symbol: "BTCUSDT", positionAmt: "2", markPrice: "100", privateField: "hidden" },
+          { symbol: "ETHUSDT", positionAmt: "0", markPrice: "10" }
+        ];
         queueMicrotask(() => listeners.get("message")?.({
           data: JSON.stringify({
             id: request.id,
@@ -523,9 +521,20 @@ test("falls back to Binance hybrid transport with complete regular and algo orde
     async (input) => {
       const url = new URL(input);
       if (url.hostname.includes("binance")) {
-        if (url.pathname === "/fapi/v1/openAlgoOrders") {
+        const symbol = url.searchParams.get("symbol");
+        if (symbol === "BTCUSDT" && url.pathname === "/fapi/v1/openOrders") {
           return Response.json([{
-            symbol: "BTCUSDT",
+            symbol,
+            side: "SELL",
+            origQty: "2",
+            price: "130",
+            type: "LIMIT",
+            status: "NEW"
+          }]);
+        }
+        if (symbol === "BTCUSDT" && url.pathname === "/fapi/v1/openAlgoOrders") {
+          return Response.json([{
+            symbol,
             side: "SELL",
             quantity: "2",
             triggerPrice: "90",
@@ -595,8 +604,8 @@ test("keeps Binance positions available when every order transport is unavailabl
   assert.deepEqual(body.warnings, ["binance_orders_unavailable"]);
 });
 
-test("explicit Binance WebSocket mode skips banned REST requests", async () => {
-  let binanceRestCalls = 0;
+test("explicit Binance WebSocket mode uses only position-scoped order REST requests", async () => {
+  const binanceRestCalls = [];
   const webSocketFactory = () => {
     const listeners = new Map();
     queueMicrotask(() => listeners.get("open")?.());
@@ -605,7 +614,11 @@ test("explicit Binance WebSocket mode skips banned REST requests", async () => {
       send(value) {
         const request = JSON.parse(value);
         queueMicrotask(() => listeners.get("message")?.({
-          data: JSON.stringify({ id: request.id, status: 200, result: [] })
+          data: JSON.stringify({
+            id: request.id,
+            status: 200,
+            result: [{ symbol: "BTCUSDT", positionAmt: "2", markPrice: "100" }]
+          })
         }));
       },
       close() {}
@@ -619,16 +632,25 @@ test("explicit Binance WebSocket mode skips banned REST requests", async () => {
     { ...ENV, BINANCE_WS_POSITIONS_ONLY: "true" },
     async (input) => {
       if (new URL(input).hostname.includes("binance")) {
-        binanceRestCalls += 1;
-        throw new Error("must not call Binance REST");
+        binanceRestCalls.push(new URL(input));
+        return Response.json([]);
       }
       return Response.json({ retCode: 0, result: { list: [] } });
     },
     webSocketFactory
   );
   assert.equal(response.status, 200);
-  assert.equal(binanceRestCalls, 0);
-  assert.equal((await response.json()).coverage.binance.transport, "websocket");
+  assert.equal(binanceRestCalls.length, 2);
+  assert.ok(binanceRestCalls.every((url) => url.searchParams.get("symbol") === "BTCUSDT"));
+  assert.deepEqual(binanceRestCalls.map((url) => url.pathname).sort(), [
+    "/fapi/v1/openAlgoOrders",
+    "/fapi/v1/openOrders"
+  ]);
+  assert.deepEqual((await response.json()).coverage.binance, {
+    positions: "complete",
+    orders: "complete",
+    transport: "websocket"
+  });
 });
 
 test("fails closed with exchange names and no upstream details", async () => {
