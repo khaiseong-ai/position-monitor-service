@@ -78,7 +78,7 @@ export async function handleRequest(request, env = {}, fetchImpl = fetch, webSoc
 
   if (url.pathname === "/health") {
     if (request.method !== "GET") return methodNotAllowed("GET");
-    return jsonResponse({ ok: true, service: "position-geo-proxy" });
+    return jsonResponse({ ok: true, service: "position-geo-proxy", build: "binance-orders-v1" });
   }
 
   if (url.pathname === "/probe") {
