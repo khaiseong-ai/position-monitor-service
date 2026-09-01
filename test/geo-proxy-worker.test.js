@@ -110,7 +110,12 @@ test("fails closed with exchange names and no upstream details", async () => {
     ENV,
     async (input) => {
       const url = new URL(input);
-      if (url.hostname.includes("binance")) return new Response("private restriction detail", { status: 451 });
+      if (url.hostname.includes("binance")) {
+        return Response.json(
+          { code: -1003, msg: "private rate-limit detail" },
+          { status: 429, headers: { "retry-after": "42" } }
+        );
+      }
       return Response.json({ retCode: 0, result: { list: [] } });
     }
   );
@@ -119,7 +124,8 @@ test("fails closed with exchange names and no upstream details", async () => {
   assert.deepEqual(body, {
     ok: false,
     failed: ["binance"],
-    failureCodes: { binance: "http_451" }
+    failureCodes: { binance: "api_-1003" },
+    retryAfterSeconds: { binance: 42 }
   });
-  assert.doesNotMatch(JSON.stringify(body), /private|restriction/);
+  assert.doesNotMatch(JSON.stringify(body), /private|rate-limit detail/);
 });

@@ -73,7 +73,16 @@ export async function handleRequest(request, env = {}, fetchImpl = fetch, webSoc
   const failed = failures.map(([name]) => name);
 
   if (failed.length > 0) {
-    return jsonResponse({ ok: false, failed, failureCodes: Object.fromEntries(failures) }, 502);
+    const retryAfterSeconds = Object.fromEntries(results.flatMap((result, index) => {
+      const retryAfter = result.status === "rejected" ? safeRetryAfter(result.reason) : null;
+      return retryAfter === null ? [] : [[names[index], retryAfter]];
+    }));
+    return jsonResponse({
+      ok: false,
+      failed,
+      failureCodes: Object.fromEntries(failures),
+      ...(Object.keys(retryAfterSeconds).length > 0 ? { retryAfterSeconds } : {})
+    }, 502);
   }
 
   return jsonResponse({
@@ -180,23 +189,28 @@ async function fetchJson(url, options, fetchImpl, label) {
     ...options,
     signal: AbortSignal.timeout(15000)
   });
+  const retryAfter = parseRetryAfter(response.headers.get("retry-after"));
   let json;
   try {
     json = await response.json();
   } catch {
-    if (!response.ok) throw upstreamError(`http_${response.status}`);
+    if (!response.ok) throw upstreamError(`http_${response.status}`, retryAfter);
     throw upstreamError("invalid_json");
   }
   if (!response.ok) {
     const apiCode = json && typeof json === "object" ? json.code ?? json.retCode : undefined;
-    throw upstreamError(apiCode === undefined ? `http_${response.status}` : apiFailureCode(apiCode));
+    throw upstreamError(
+      apiCode === undefined ? `http_${response.status}` : apiFailureCode(apiCode),
+      retryAfter
+    );
   }
   return json;
 }
 
-function upstreamError(safeCode) {
+function upstreamError(safeCode, retryAfterSeconds = null) {
   const error = new Error("upstream unavailable");
   error.safeCode = safeCode;
+  error.retryAfterSeconds = retryAfterSeconds;
   return error;
 }
 
@@ -208,6 +222,19 @@ function apiFailureCode(value) {
 function safeFailureCode(error) {
   const code = String(error?.safeCode || "network");
   return /^[a-z0-9_-]+$/i.test(code) ? code : "network";
+}
+
+function safeRetryAfter(error) {
+  const seconds = Number(error?.retryAfterSeconds);
+  return Number.isInteger(seconds) && seconds >= 0 ? seconds : null;
+}
+
+function parseRetryAfter(value) {
+  if (!value) return null;
+  const seconds = Number.parseInt(value, 10);
+  if (Number.isInteger(seconds) && seconds >= 0) return seconds;
+  const date = Date.parse(value);
+  return Number.isFinite(date) ? Math.max(0, Math.ceil((date - Date.now()) / 1000)) : null;
 }
 
 async function probeEndpoint(url, fetchImpl) {
