@@ -52,6 +52,65 @@ test("public probe returns status categories only", async () => {
   assert.doesNotMatch(JSON.stringify(body), /private|ban detail/);
 });
 
+test("authenticated Binance WebSocket diagnostic returns sanitized method results", async () => {
+  const sentRequests = [];
+  const webSocketFactory = () => {
+    const listeners = new Map();
+    queueMicrotask(() => listeners.get("open")?.());
+    return {
+      addEventListener(name, listener) { listeners.set(name, listener); },
+      send(value) {
+        const request = JSON.parse(value);
+        sentRequests.push(request);
+        const successful = request.method === "account.position";
+        const response = successful
+          ? { id: request.id, status: 200, result: [{ symbol: "PRIVATE", positionAmt: "1" }] }
+          : { id: request.id, status: 400, error: { code: -1002, msg: "private upstream detail" } };
+        queueMicrotask(() => listeners.get("message")?.({ data: JSON.stringify(response) }));
+      },
+      close() {}
+    };
+  };
+
+  const response = await handleRequest(
+    new Request("https://worker.test/diagnostics/binance-ws", {
+      method: "POST",
+      headers: { authorization: "Bearer test-token" }
+    }),
+    ENV,
+    async () => { throw new Error("must not fetch"); },
+    webSocketFactory
+  );
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.deepEqual(body, {
+    ok: false,
+    methods: {
+      positions: { status: 200, count: 1 },
+      openOrders: { status: 400, code: "api_-1002" },
+      openAlgoOrders: { status: 400, code: "api_-1002" },
+      algoOrders: { status: 400, code: "api_-1002" }
+    }
+  });
+  assert.equal(sentRequests.length, 4);
+  for (const request of sentRequests) {
+    assert.equal(request.params.apiKey, "binance-key");
+    assert.match(request.params.signature, /^[0-9a-f]{64}$/);
+  }
+  assert.doesNotMatch(JSON.stringify(body), /PRIVATE|private upstream|binance-key|signature/);
+});
+
+test("rejects unauthenticated Binance WebSocket diagnostics", async () => {
+  const response = await handleRequest(
+    new Request("https://worker.test/diagnostics/binance-ws", { method: "POST" }),
+    ENV,
+    async () => { throw new Error("must not fetch"); },
+    () => { throw new Error("must not open websocket"); }
+  );
+  assert.equal(response.status, 401);
+  assert.deepEqual(await response.json(), { ok: false });
+});
+
 test("returns only normalized Binance and Bybit state", async () => {
   const fetchImpl = async (input) => {
     const url = new URL(input);

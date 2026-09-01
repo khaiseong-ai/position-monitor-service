@@ -55,6 +55,37 @@ export async function handleRequest(request, env = {}, fetchImpl = fetch, webSoc
     });
   }
 
+  if (url.pathname === "/diagnostics/binance-ws") {
+    if (request.method !== "POST") return methodNotAllowed("POST");
+    if (!authorized(request, env.PROXY_TOKEN)) return jsonResponse({ ok: false }, 401);
+
+    const missing = ["BINANCE_API_KEY", "BINANCE_API_SECRET"]
+      .filter((name) => !String(env[name] || "").trim());
+    if (missing.length > 0) return jsonResponse({ ok: false, reason: "not_configured" }, 503);
+
+    const config = { apiKey: env.BINANCE_API_KEY, apiSecret: env.BINANCE_API_SECRET };
+    const methods = {
+      positions: "account.position",
+      openOrders: "openOrders.status",
+      openAlgoOrders: "openAlgoOrders.status",
+      algoOrders: "algoOrders.status"
+    };
+    const results = await Promise.all(Object.entries(methods).map(async ([label, method]) => {
+      try {
+        const payload = await binanceWebSocketRequest(config, method, webSocketFactory);
+        return [label, safeWebSocketDiagnostic(payload)];
+      } catch (error) {
+        return [label, { status: 0, code: safeFailureCode(error) }];
+      }
+    }));
+    const diagnostics = Object.fromEntries(results);
+
+    return jsonResponse({
+      ok: Object.values(diagnostics).every((result) => result.status === 200),
+      methods: diagnostics
+    });
+  }
+
   if (url.pathname !== "/state") return jsonResponse({ ok: false }, 404);
   if (request.method !== "POST") return methodNotAllowed("POST");
   if (!authorized(request, env.PROXY_TOKEN)) return jsonResponse({ ok: false }, 401);
@@ -306,6 +337,72 @@ async function probeBinanceWebSocket(webSocketFactory) {
     clearTimeout(timer);
     return "ws_error";
   }
+}
+
+async function binanceWebSocketRequest(config, method, webSocketFactory) {
+  const id = `${method}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const params = {
+    apiKey: config.apiKey,
+    recvWindow: 5000,
+    timestamp: Date.now()
+  };
+  const signaturePayload = Object.entries(params)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([name, value]) => `${name}=${value}`)
+    .join("&");
+  params.signature = await hmacHex("binance-ws", config.apiSecret, signaturePayload);
+
+  let socket;
+  let timer;
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try {
+        socket?.close(1000, "diagnostic complete");
+      } catch {
+        // The peer may already have closed the socket.
+      }
+      callback(value);
+    };
+
+    try {
+      socket = webSocketFactory(BINANCE_WS);
+      timer = setTimeout(() => finish(reject, upstreamError("ws_timeout")), 15000);
+      socket.addEventListener("open", () => {
+        socket.send(JSON.stringify({ id, method, params }));
+      });
+      socket.addEventListener("message", (event) => {
+        try {
+          const payload = JSON.parse(String(event.data || ""));
+          if (payload.id === id) finish(resolve, payload);
+        } catch {
+          finish(reject, upstreamError("ws_invalid"));
+        }
+      });
+      socket.addEventListener("error", () => finish(reject, upstreamError("ws_error")));
+      socket.addEventListener("close", () => finish(reject, upstreamError("ws_closed")));
+    } catch {
+      finish(reject, upstreamError("ws_error"));
+    }
+  });
+}
+
+function safeWebSocketDiagnostic(payload) {
+  const status = Number(payload?.status);
+  if (!Number.isInteger(status)) return { status: 0, code: "ws_invalid" };
+  if (status === 200) {
+    return {
+      status,
+      ...(Array.isArray(payload.result) ? { count: payload.result.length } : {})
+    };
+  }
+  return {
+    status,
+    code: apiFailureCode(payload?.error?.code)
+  };
 }
 
 function defaultWebSocketFactory(url) {
