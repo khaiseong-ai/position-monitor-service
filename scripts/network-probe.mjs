@@ -23,7 +23,7 @@ for (const [name, url] of endpoints) {
 }
 
 const relayUrl = String(process.env.POSITION_RELAY_URL || "").trim();
-const relayToken = String(process.env.POSITION_RELAY_TOKEN || "").trim();
+const relayToken = await relayAuthorizationToken();
 if (relayUrl && relayToken) {
   let diagnostic = { status: "network" };
   try {
@@ -44,6 +44,26 @@ if (relayUrl && relayToken) {
     // Do not expose relay or exchange response details in workflow logs.
   }
   console.log(`binance_ws_diagnostic=${JSON.stringify(diagnostic)}`);
+}
+
+async function relayAuthorizationToken() {
+  const requestUrl = String(process.env.ACTIONS_ID_TOKEN_REQUEST_URL || "").trim();
+  const requestToken = String(process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN || "").trim();
+  if (requestUrl && requestToken) {
+    try {
+      const url = new URL(requestUrl);
+      url.searchParams.set("audience", "position-relay");
+      const response = await fetch(url, {
+        headers: { authorization: `Bearer ${requestToken}` },
+        signal: AbortSignal.timeout(30000)
+      });
+      const body = await response.json().catch(() => null);
+      if (response.ok && String(body?.value || "").trim()) return String(body.value).trim();
+    } catch {
+      // Fall through to the configured relay token outside GitHub Actions.
+    }
+  }
+  return String(process.env.POSITION_RELAY_TOKEN || "").trim();
 }
 
 function sanitizeMethods(value) {
