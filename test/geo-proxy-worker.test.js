@@ -101,7 +101,7 @@ test("dispatches the position workflow without exposing scheduler failures", asy
     { GITHUB_ACTIONS_TOKEN: "actions-only-token" },
     async () => new Response("private response", { status: 403 })
   ), (error) => {
-    assert.match(error.message, /HTTP 403/);
+    assert.equal(error.safeCode, "github_http_403");
     assert.doesNotMatch(error.message, /actions-only-token|private response/);
     return true;
   });
@@ -497,16 +497,18 @@ test("falls back to position-scoped Binance order requests", async () => {
       addEventListener(name, listener) { listeners.set(name, listener); },
       send(value) {
         const request = JSON.parse(value);
-        const result = [
-          { symbol: "BTCUSDT", positionAmt: "2", markPrice: "100", privateField: "hidden" },
-          { symbol: "ETHUSDT", positionAmt: "0", markPrice: "10" }
-        ];
+        const response = request.method === "v2/account.position"
+          ? {
+              id: request.id,
+              status: 200,
+              result: [
+                { symbol: "BTCUSDT", positionAmt: "2", markPrice: "100", privateField: "hidden" },
+                { symbol: "ETHUSDT", positionAmt: "0", markPrice: "10" }
+              ]
+            }
+          : { id: request.id, status: 400, error: { code: -1003 } };
         queueMicrotask(() => listeners.get("message")?.({
-          data: JSON.stringify({
-            id: request.id,
-            status: 200,
-            result
-          })
+          data: JSON.stringify(response)
         }));
       },
       close() {}
@@ -613,11 +615,14 @@ test("explicit Binance WebSocket mode gets complete account orders through REST"
       addEventListener(name, listener) { listeners.set(name, listener); },
       send(value) {
         const request = JSON.parse(value);
+        const result = request.method === "v2/account.position"
+          ? [{ symbol: "BTCUSDT", positionAmt: "2", markPrice: "100" }]
+          : [];
         queueMicrotask(() => listeners.get("message")?.({
           data: JSON.stringify({
             id: request.id,
             status: 200,
-            result: [{ symbol: "BTCUSDT", positionAmt: "2", markPrice: "100" }]
+            result
           })
         }));
       },
@@ -651,11 +656,10 @@ test("explicit Binance WebSocket mode gets complete account orders through REST"
     webSocketFactory
   );
   assert.equal(response.status, 200);
-  assert.equal(binanceRestCalls.length, 2);
+  assert.equal(binanceRestCalls.length, 1);
   assert.ok(binanceRestCalls.every((url) => !url.searchParams.has("symbol")));
   assert.deepEqual(binanceRestCalls.map((url) => url.pathname).sort(), [
-    "/fapi/v1/openAlgoOrders",
-    "/fapi/v1/openOrders"
+    "/fapi/v1/openAlgoOrders"
   ]);
   const body = await response.json();
   assert.deepEqual(body.orders, [{

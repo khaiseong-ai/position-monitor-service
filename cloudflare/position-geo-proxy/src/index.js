@@ -50,7 +50,13 @@ export default {
     return handleRequest(request, env);
   },
   async scheduled(_controller, env) {
-    await dispatchPositionMonitor(env);
+    try {
+      await dispatchPositionMonitor(env);
+      console.log("Position monitor dispatch accepted by GitHub");
+    } catch (error) {
+      console.error(`Position monitor dispatch failed: ${safeFailureCode(error)}`);
+      throw error;
+    }
   }
 };
 
@@ -70,7 +76,7 @@ export async function dispatchPositionMonitor(env = {}, fetchImpl = fetch) {
     body: JSON.stringify({ ref: "main", inputs: { notify: "true" } })
   });
   if (![200, 204].includes(response.status)) {
-    throw new Error(`GitHub Actions dispatch failed with HTTP ${response.status}`);
+    throw upstreamError(`github_http_${response.status}`);
   }
 }
 
@@ -693,25 +699,55 @@ async function fetchBinancePositionScopedState(config, fetchImpl, webSocketFacto
     price: row.markPrice
   })).filter(Boolean);
   const symbols = [...new Set(activeRows.map((row) => String(row.symbol || "").trim().toUpperCase()).filter(Boolean))];
-  let orderRows = [];
-  let ordersComplete = false;
+  const orderRows = [];
+  let normalOrdersComplete = false;
+  let algoOrdersComplete = false;
+  let normalOrderError;
+  let algoOrderError;
   try {
-    orderRows = await fetchBinanceOrderRowsWithRetry(config, fetchImpl);
-    ordersComplete = true;
-  } catch (globalOrderError) {
-    let orderFailures = 0;
+    const payload = await binanceWebSocketRequest(config, "openOrders.status", webSocketFactory);
+    if (Number(payload?.status) !== 200 || !Array.isArray(payload?.result)) {
+      throw upstreamError(apiFailureCode(payload?.error?.code));
+    }
+    orderRows.push(...payload.result);
+    normalOrdersComplete = true;
+  } catch (error) {
+    normalOrderError = error;
+  }
+  try {
+    orderRows.push(...asArray(await binanceSignedGetWithRetry(config, "/fapi/v1/openAlgoOrders", fetchImpl)));
+    algoOrdersComplete = true;
+  } catch (error) {
+    algoOrderError = error;
+  }
+
+  let normalOrderFailures = 0;
+  let algoOrderFailures = 0;
+  if (!normalOrdersComplete || !algoOrdersComplete) {
     for (const symbol of symbols) {
-      try {
-        orderRows.push(...await fetchBinanceOrderRows(config, fetchImpl, { symbol }));
-      } catch {
-        orderFailures += 1;
+      if (!normalOrdersComplete) {
+        try {
+          orderRows.push(...asArray(await binanceSignedGet(config, "/fapi/v1/openOrders", fetchImpl, { symbol })));
+        } catch {
+          normalOrderFailures += 1;
+        }
+      }
+      if (!algoOrdersComplete) {
+        try {
+          orderRows.push(...asArray(await binanceSignedGet(config, "/fapi/v1/openAlgoOrders", fetchImpl, { symbol })));
+        } catch {
+          algoOrderFailures += 1;
+        }
       }
     }
+    normalOrdersComplete = normalOrdersComplete || (symbols.length > 0 && normalOrderFailures === 0);
+    algoOrdersComplete = algoOrdersComplete || (symbols.length > 0 && algoOrderFailures === 0);
     console.warn(
-      `Binance order fallback: global=${safeFailureCode(globalOrderError)} scoped_failures=${orderFailures}`
+      `Binance order fallback: normal=${safeFailureCode(normalOrderError)}/${normalOrderFailures}`
+      + ` algo=${safeFailureCode(algoOrderError)}/${algoOrderFailures}`
     );
-    ordersComplete = symbols.length > 0 && orderFailures === 0;
   }
+  const ordersComplete = normalOrdersComplete && algoOrdersComplete;
   return {
     positions,
     orders: normalizeBinanceOrders(orderRows),
@@ -722,22 +758,6 @@ async function fetchBinancePositionScopedState(config, fetchImpl, webSocketFacto
     },
     warnings: ordersComplete ? [] : ["binance_orders_unavailable"]
   };
-}
-
-async function fetchBinanceOrderRows(config, fetchImpl, params = {}) {
-  const rows = [];
-  for (const path of ["/fapi/v1/openOrders", "/fapi/v1/openAlgoOrders"]) {
-    rows.push(...asArray(await binanceSignedGet(config, path, fetchImpl, params)));
-  }
-  return rows;
-}
-
-async function fetchBinanceOrderRowsWithRetry(config, fetchImpl) {
-  const rows = [];
-  for (const path of ["/fapi/v1/openOrders", "/fapi/v1/openAlgoOrders"]) {
-    rows.push(...asArray(await binanceSignedGetWithRetry(config, path, fetchImpl)));
-  }
-  return rows;
 }
 
 async function binanceSignedGetWithRetry(config, path, fetchImpl) {
