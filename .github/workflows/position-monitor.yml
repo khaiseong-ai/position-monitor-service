@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      POSITION_RELAY_URL: ${{ secrets.POSITION_RELAY_URL }}
+      POSITION_RELAY_URL: https://position-geo-proxy.position-monitor-service.workers.dev/state
       POSITION_RELAY_TOKEN: ${{ secrets.POSITION_RELAY_TOKEN }}
       POSITION_RELAY_EXCHANGES: binance,bybit
       BINANCE_API_KEY: ${{ secrets.BINANCE_API_KEY }}
