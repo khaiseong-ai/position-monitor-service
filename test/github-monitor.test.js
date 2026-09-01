@@ -51,9 +51,10 @@ test("classifies failures without logging exchange response text", () => {
   const diagnostics = failedExchangeDiagnostics([
     "binance: request HTTP 451: private response",
     "bybit: bybit positions error: 10003 private response",
-    "mexc_orders: fetch failed: private response"
+    "mexc_orders: fetch failed: private response",
+    "phemex: access from this country is restricted"
   ]);
-  assert.deepEqual(diagnostics, ["binance=http_451", "bybit=api_code_10003", "mexc=network"]);
+  assert.deepEqual(diagnostics, ["binance=http_451", "bybit=api_code_10003", "mexc=network", "phemex=geo_or_access"]);
   assert.doesNotMatch(diagnostics.join(" "), /private response/);
 });
 
