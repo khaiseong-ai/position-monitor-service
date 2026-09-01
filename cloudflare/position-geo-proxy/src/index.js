@@ -192,12 +192,16 @@ async function probeEndpoint(url, fetchImpl) {
       signal: AbortSignal.timeout(10000)
     });
     if (response.status !== 403 && response.status !== 451) {
+      const retryAfter = Number.parseInt(response.headers.get("retry-after") || "", 10);
       try {
         await response.body?.cancel();
       } catch {
         // The status is sufficient; a consumed body is not required.
       }
-      return `http_${response.status}`;
+      const retrySuffix = Number.isFinite(retryAfter) && retryAfter >= 0
+        ? `_retry_${retryAfter}`
+        : "";
+      return `http_${response.status}${retrySuffix}`;
     }
     const text = await response.text().catch(() => "");
     if (/restricted location|not available in your (country|region)|country or region/i.test(text)) {

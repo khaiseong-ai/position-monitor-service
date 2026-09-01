@@ -34,18 +34,22 @@ test("public probe returns status categories only", async () => {
   const response = await handleRequest(
     new Request("https://worker.test/probe"),
     {},
-    async (url) => new Response(String(url).includes("bybit") ? "Access denied" : "Request blocked", { status: 403 }),
+    async (url) => String(url).includes("bybit")
+      ? new Response("Access denied", { status: 403 })
+      : new Response("private ban detail", { status: 418, headers: { "retry-after": "120" } }),
     webSocketFactory
   );
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), {
+  const body = await response.json();
+  assert.deepEqual(body, {
     ok: false,
     endpoints: {
-      binance: "http_403_access",
+      binance: "http_418_retry_120",
       binanceWs: "ws_200",
       bybit: "http_403_access"
     }
   });
+  assert.doesNotMatch(JSON.stringify(body), /private|ban detail/);
 });
 
 test("returns only normalized Binance and Bybit state", async () => {
