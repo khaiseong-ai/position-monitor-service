@@ -50,6 +50,7 @@ if (relayUrl && relayToken) {
     });
     const body = await response.json().catch(() => null);
     diagnostic = {
+      host: url.hostname,
       status: `http_${response.status}`,
       ok: body?.ok === true,
       positions: Array.isArray(body?.positions) ? body.positions.length : 0,
@@ -83,6 +84,7 @@ if (relayUrl && relayToken) {
     });
     const body = await response.json().catch(() => null);
     methodDiagnostic = {
+      host: url.hostname,
       status: `http_${response.status}`,
       methods: sanitizeMethods(body?.methods)
     };
