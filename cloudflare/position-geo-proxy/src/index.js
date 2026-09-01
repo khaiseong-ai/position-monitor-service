@@ -49,8 +49,8 @@ export default {
   fetch(request, env) {
     return handleRequest(request, env);
   },
-  scheduled(_controller, env, ctx) {
-    ctx.waitUntil(dispatchPositionMonitor(env));
+  async scheduled(_controller, env) {
+    await dispatchPositionMonitor(env);
   }
 };
 
