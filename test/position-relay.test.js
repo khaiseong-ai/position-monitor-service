@@ -12,6 +12,20 @@ const CONFIG = {
   }
 };
 
+async function withStaticRelayAuth(callback) {
+  const names = ["ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"];
+  const previous = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  for (const name of names) delete process.env[name];
+  try {
+    return await callback();
+  } finally {
+    for (const name of names) {
+      if (previous[name] === undefined) delete process.env[name];
+      else process.env[name] = previous[name];
+    }
+  }
+}
+
 test("accepts only normalized relay state for configured exchanges", async () => {
   const fetchImpl = async (url, options) => {
     assert.equal(String(url), CONFIG.url);
@@ -37,14 +51,16 @@ test("accepts only normalized relay state for configured exchanges", async () =>
     });
   };
 
-  const state = await fetchPositionRelay(CONFIG, fetchImpl);
-  assert.deepEqual(state.positions, [
-    { symbol: "BTC", source: "binance", side: "long", size: 2, price: 100, raw: undefined }
-  ]);
-  assert.deepEqual(state.orders, []);
-  assert.deepEqual(state.warnings, ["binance_orders_unavailable"]);
-  assert.equal(state.coverage.binance.orders, "unavailable");
-  assert.doesNotMatch(JSON.stringify(state), /hidden/);
+  await withStaticRelayAuth(async () => {
+    const state = await fetchPositionRelay(CONFIG, fetchImpl);
+    assert.deepEqual(state.positions, [
+      { symbol: "BTC", source: "binance", side: "long", size: 2, price: 100, raw: undefined }
+    ]);
+    assert.deepEqual(state.orders, []);
+    assert.deepEqual(state.warnings, ["binance_orders_unavailable"]);
+    assert.equal(state.coverage.binance.orders, "unavailable");
+    assert.doesNotMatch(JSON.stringify(state), /hidden/);
+  });
 });
 
 test("rejects incomplete relay position coverage", async () => {
@@ -57,5 +73,8 @@ test("rejects incomplete relay position coverage", async () => {
       bybit: { positions: "complete", orders: "complete", transport: "rest" }
     }
   });
-  await assert.rejects(() => fetchPositionRelay(CONFIG, fetchImpl), /coverage is incomplete for binance/);
+  await withStaticRelayAuth(() => assert.rejects(
+    () => fetchPositionRelay(CONFIG, fetchImpl),
+    /coverage is incomplete for binance/
+  ));
 });
