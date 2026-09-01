@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  dispatchPositionMonitor,
   handleRequest,
   verifyGithubOidcToken
 } from "../cloudflare/position-geo-proxy/src/index.js";
@@ -73,6 +74,33 @@ test("accepts only signed GitHub OIDC tokens for the main workflow repository", 
   assert.equal(await verifyGithubOidcToken(wrongWorkflow.token, async () => {
     throw new Error("workflow claims must fail before key lookup");
   }), false);
+});
+
+test("dispatches the position workflow without exposing scheduler failures", async () => {
+  let captured;
+  await dispatchPositionMonitor({ GITHUB_ACTIONS_TOKEN: "actions-only-token" }, async (url, options) => {
+    captured = { url: String(url), options };
+    return new Response(null, { status: 204 });
+  });
+
+  assert.equal(captured.url,
+    "https://api.github.com/repos/khaiseong-ai/position-monitor-service/actions/workflows/position-monitor.yml/dispatches");
+  assert.equal(captured.options.headers.authorization, "Bearer actions-only-token");
+  assert.deepEqual(JSON.parse(captured.options.body), {
+    ref: "main",
+    inputs: { notify: true }
+  });
+  await assert.rejects(() => dispatchPositionMonitor({}, async () => {
+    throw new Error("must not call GitHub");
+  }), /scheduler is not configured/);
+  await assert.rejects(() => dispatchPositionMonitor(
+    { GITHUB_ACTIONS_TOKEN: "actions-only-token" },
+    async () => new Response("private response", { status: 403 })
+  ), (error) => {
+    assert.match(error.message, /HTTP 403/);
+    assert.doesNotMatch(error.message, /actions-only-token|private response/);
+    return true;
+  });
 });
 
 test("rejects unauthenticated state requests without calling exchanges", async () => {

@@ -28,6 +28,8 @@ const GITHUB_OIDC_ISSUER = "https://token.actions.githubusercontent.com";
 const GITHUB_OIDC_JWKS = `${GITHUB_OIDC_ISSUER}/.well-known/jwks`;
 const GITHUB_OIDC_AUDIENCE = "position-relay";
 const GITHUB_REPOSITORY = "khaiseong-ai/position-monitor-service";
+const GITHUB_POSITION_DISPATCH_URL = `https://api.github.com/repos/${GITHUB_REPOSITORY}`
+  + "/actions/workflows/position-monitor.yml/dispatches";
 const GITHUB_WORKFLOWS = new Set([
   `${GITHUB_REPOSITORY}/.github/workflows/position-monitor.yml@refs/heads/main`,
   `${GITHUB_REPOSITORY}/.github/workflows/ks-funding-sheet.yml@refs/heads/main`
@@ -46,8 +48,31 @@ let githubJwksCache = { expiresAt: 0, keys: [] };
 export default {
   fetch(request, env) {
     return handleRequest(request, env);
+  },
+  scheduled(_controller, env, ctx) {
+    ctx.waitUntil(dispatchPositionMonitor(env));
   }
 };
+
+export async function dispatchPositionMonitor(env = {}, fetchImpl = fetch) {
+  const token = String(env.GITHUB_ACTIONS_TOKEN || "").trim();
+  if (!token) throw new Error("GitHub Actions scheduler is not configured");
+
+  const response = await fetchImpl(GITHUB_POSITION_DISPATCH_URL, {
+    method: "POST",
+    headers: {
+      accept: "application/vnd.github+json",
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+      "user-agent": "position-monitor-scheduler/1.0",
+      "x-github-api-version": "2022-11-28"
+    },
+    body: JSON.stringify({ ref: "main", inputs: { notify: true } })
+  });
+  if (response.status !== 204) {
+    throw new Error(`GitHub Actions dispatch failed with HTTP ${response.status}`);
+  }
+}
 
 export async function handleRequest(request, env = {}, fetchImpl = fetch, webSocketFactory = defaultWebSocketFactory) {
   const url = new URL(request.url);

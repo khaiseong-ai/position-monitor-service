@@ -7,6 +7,9 @@
   "placement": {
     "region": "aws:ap-southeast-1"
   },
+  "triggers": {
+    "crons": ["2-57/5 * * * *"]
+  },
   "observability": {
     "enabled": false
   }
