@@ -236,6 +236,47 @@ test("Binance WebSocket diagnostic stops after a sanitized position connection f
   assert.doesNotMatch(JSON.stringify(body), /private detail|binance-key|signature/);
 });
 
+test("state diagnostics use request-scoped Binance credentials without returning them", async () => {
+  const sentRequests = [];
+  const webSocketFactory = () => {
+    const listeners = new Map();
+    queueMicrotask(() => listeners.get("open")?.());
+    return {
+      addEventListener(name, listener) { listeners.set(name, listener); },
+      send(value) {
+        const request = JSON.parse(value);
+        sentRequests.push(request);
+        queueMicrotask(() => listeners.get("message")?.({
+          data: JSON.stringify({ id: request.id, status: 200, result: [] })
+        }));
+      },
+      close() {}
+    };
+  };
+  const response = await handleRequest(
+    new Request("https://worker.test/state", {
+      method: "POST",
+      headers: { authorization: "Bearer test-token" },
+      body: JSON.stringify({
+        diagnostics: "binance",
+        exchanges: ["binance"],
+        credentials: { binance: { apiKey: "request-key", apiSecret: "request-secret" } }
+      })
+    }),
+    { ...ENV, BINANCE_API_KEY: "", BINANCE_API_SECRET: "" },
+    async () => Response.json([]),
+    webSocketFactory
+  );
+  const body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(body.ok, true);
+  assert.equal(body.methods.openOrders.status, 200);
+  assert.equal(body.methods.openAlgoOrdersRest.status, 200);
+  assert.equal(sentRequests.length, 4);
+  assert.ok(sentRequests.every((request) => request.params.apiKey === "request-key"));
+  assert.doesNotMatch(JSON.stringify(body), /request-key|request-secret|signature/);
+});
+
 test("rejects unauthenticated Binance WebSocket diagnostics", async () => {
   const response = await handleRequest(
     new Request("https://worker.test/diagnostics/binance-ws", { method: "POST" }),

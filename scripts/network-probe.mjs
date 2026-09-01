@@ -66,7 +66,7 @@ if (relayUrl && relayToken) {
   let methodDiagnostic = { status: "network", methods: {} };
   try {
     const url = new URL(relayUrl);
-    url.pathname = "/diagnostics/binance-ws";
+    url.pathname = "/state";
     url.search = "";
     const response = await fetch(url, {
       method: "POST",
@@ -74,7 +74,11 @@ if (relayUrl && relayToken) {
         authorization: `Bearer ${relayToken}`,
         "content-type": "application/json"
       },
-      body: JSON.stringify({ credentials: { binance: binanceCredentials } }),
+      body: JSON.stringify({
+        diagnostics: "binance",
+        exchanges: ["binance"],
+        credentials: { binance: binanceCredentials }
+      }),
       signal: AbortSignal.timeout(90000)
     });
     const body = await response.json().catch(() => null);

@@ -165,6 +165,39 @@ export async function handleRequest(request, env = {}, fetchImpl = fetch, webSoc
   const missing = requiredSecretsFor(names).filter((name) => !String(runtimeEnv[name] || "").trim());
   if (missing.length > 0) return jsonResponse({ ok: false, reason: "not_configured" }, 503);
 
+  if (body.diagnostics === "binance" && names.length === 1 && names[0] === "binance") {
+    const config = {
+      apiKey: String(runtimeEnv.BINANCE_API_KEY).trim(),
+      apiSecret: String(runtimeEnv.BINANCE_API_SECRET).trim()
+    };
+    const runWebSocketDiagnostic = async (method) => {
+      try {
+        return safeWebSocketDiagnostic(await binanceWebSocketRequest(config, method, webSocketFactory));
+      } catch (error) {
+        return { status: 0, code: safeFailureCode(error) };
+      }
+    };
+    const runRestDiagnostic = async (path) => {
+      try {
+        const rows = await binanceSignedGet(config, path, fetchImpl);
+        return { status: 200, count: asArray(rows).length };
+      } catch (error) {
+        return { status: 0, code: safeFailureCode(error) };
+      }
+    };
+    return jsonResponse({
+      ok: true,
+      methods: {
+        positions: await runWebSocketDiagnostic("v2/account.position"),
+        openOrders: await runWebSocketDiagnostic("openOrders.status"),
+        openAlgoOrders: await runWebSocketDiagnostic("openAlgoOrders.status"),
+        algoOrders: await runWebSocketDiagnostic("algoOrders.status"),
+        openOrdersRest: await runRestDiagnostic("/fapi/v1/openOrders"),
+        openAlgoOrdersRest: await runRestDiagnostic("/fapi/v1/openAlgoOrders")
+      }
+    });
+  }
+
   const results = await Promise.allSettled(names.map((name) => name === "binance"
     ? fetchBinanceState(runtimeEnv, fetchImpl, webSocketFactory)
     : fetchBybitState(runtimeEnv, fetchImpl)));
