@@ -1,4 +1,5 @@
 const POSITION_SPREADSHEET_ID = "1-fhxWIpcplFMON_4hlTm3uQy8JG9RmEgcEgSld4YAoc";
+const FUNDING_SPREADSHEET_ID = "1zblziMpkQcoEBoRJEyVmJG1zLaRTMTSXyn6ob4KOVxU";
 const POSITION_SECRET_PROPERTY = "POSITION_SHEET_SECRET";
 const POSITION_IGNORE_SHEETS = {
   ignoreSymbols: "Ignore",
@@ -22,6 +23,31 @@ const POSITION_HEADERS = {
   MissingTpSlAlerts: ["Symbol", "Source", "Side", "Size", "Current Price", "Missing TP", "Missing SL", "Reason"]
 };
 const RUNS_HEADER = ["Checked At", "Positions", "Alerts", "Errors", "Telegram Sent", "Telegram Error"];
+const FUNDING_TABS = {
+  equity: "Account_Equity",
+  funding: "Account_Funding",
+  health: "Account_Health",
+  runs: "Account_Runs"
+};
+const FUNDING_HEADERS = {
+  equity: [
+    "Checked At", "Exchange", "Futures USDT", "Futures USDC", "Spot USDT",
+    "Spot USDC", "Funding USDT", "Funding USDC", "Unrealized PnL", "Total"
+  ],
+  funding: [
+    "Checked At", "Symbol", "Source", "Side", "Size", "Current Price",
+    "Entry Price", "Position Value", "uPnL", "Cnt", "Interval h", "3d Funding",
+    "Funding Records", "Orders", "Start Time", "End Time"
+  ],
+  health: [
+    "Checked At", "Class", "Symbol", "Net Funding", "Long Size", "Short Size",
+    "Long Funding", "Short Funding", "Long Orders", "Short Orders", "Details"
+  ],
+  runs: [
+    "Checked At", "Status", "Positions", "Exchanges", "Total Equity",
+    "Elapsed ms", "Rows Written", "Error"
+  ]
+};
 
 function doGet() {
   return jsonResponse_({ ok: true, service: "position-sheet" });
@@ -39,6 +65,11 @@ function doPost(event) {
     if (!expectedSecret || String(payload.secret || "") !== expectedSecret) throw new Error("unauthorized");
     if (payload.action === "readIgnoreConfig") {
       return jsonResponse_({ ok: true, ignores: readIgnoreConfig_() });
+    }
+    if (payload.action === "writeAccountFunding") {
+      const snapshot = validateFundingSnapshot_(payload.snapshot);
+      const rowsWritten = writeFundingSnapshot_(snapshot);
+      return jsonResponse_({ ok: true, rowsWritten: rowsWritten });
     }
     if (payload.action !== "writePositionSnapshot") throw new Error("unsupported_action");
 
@@ -149,6 +180,206 @@ function formatSnapshotSheet_(sheet, width) {
   for (let column = 1; column <= width; column += 1) {
     sheet.setColumnWidth(column, Math.min(Math.max(sheet.getColumnWidth(column), 90), 360));
   }
+}
+
+function validateFundingSnapshot_(snapshot) {
+  if (!snapshot || snapshot.success !== true) throw new Error("invalid_funding_snapshot");
+  if (!Array.isArray(snapshot.equity) || snapshot.equity.length > 50) {
+    throw new Error("invalid_funding_equity");
+  }
+  if (!Array.isArray(snapshot.positions) || snapshot.positions.length > 2000) {
+    throw new Error("invalid_funding_positions");
+  }
+  const health = snapshot.hedgeHealth || {};
+  ["noProtection", "fundingLoss", "misaligned"].forEach(function(name) {
+    if (!Array.isArray(health[name] || []) || (health[name] || []).length > 2000) {
+      throw new Error("invalid_funding_health");
+    }
+  });
+  fundingDate_(snapshot.checkedAt);
+  return snapshot;
+}
+
+function writeFundingSnapshot_(snapshot) {
+  const workbook = SpreadsheetApp.openById(FUNDING_SPREADSHEET_ID);
+  const checkedAt = fundingDate_(snapshot.checkedAt);
+  const equityRows = buildFundingEquityRows_(snapshot, checkedAt);
+  const positionRows = buildFundingPositionRows_(snapshot, checkedAt);
+  const healthRows = buildFundingHealthRows_(snapshot, checkedAt);
+  const rowsWritten = equityRows.length + positionRows.length + healthRows.length;
+
+  replaceFundingRows_(workbook, FUNDING_TABS.equity, FUNDING_HEADERS.equity, equityRows, {
+    widths: [170, 100, 110, 110, 100, 100, 110, 110, 115, 115],
+    dateColumns: [1],
+    numericColumns: [3, 4, 5, 6, 7, 8, 9, 10]
+  });
+  replaceFundingRows_(workbook, FUNDING_TABS.funding, FUNDING_HEADERS.funding, positionRows, {
+    widths: [170, 90, 90, 70, 90, 105, 105, 115, 105, 60, 80, 105, 260, 240, 150, 150],
+    dateColumns: [1, 15, 16],
+    numericColumns: [5, 6, 7, 8, 9, 10, 11, 12]
+  });
+  replaceFundingRows_(workbook, FUNDING_TABS.health, FUNDING_HEADERS.health, healthRows, {
+    widths: [170, 105, 90, 105, 95, 95, 105, 105, 90, 90, 280],
+    dateColumns: [1],
+    numericColumns: [4, 5, 6, 7, 8, 9, 10]
+  });
+  appendFundingRun_(workbook, [
+    checkedAt,
+    "OK",
+    snapshot.positions.length,
+    snapshot.equity.length,
+    fundingNumber_(snapshot.totalEquity),
+    fundingInteger_(snapshot.elapsedMs),
+    rowsWritten,
+    ""
+  ]);
+  SpreadsheetApp.flush();
+  return rowsWritten;
+}
+
+function buildFundingEquityRows_(snapshot, checkedAt) {
+  return snapshot.equity.map(function(row) {
+    return [
+      checkedAt,
+      fundingText_(row.exchange),
+      fundingNumber_(row.futuresUsdt),
+      fundingNumber_(row.futuresUsdc),
+      fundingNumber_(row.spotUsdt),
+      fundingNumber_(row.spotUsdc),
+      fundingNumber_(row.fundingUsdt),
+      fundingNumber_(row.fundingUsdc),
+      fundingNumber_(row.unrealizedPnl),
+      fundingNumber_(row.total)
+    ];
+  });
+}
+
+function buildFundingPositionRows_(snapshot, checkedAt) {
+  return snapshot.positions.map(function(row) {
+    return [
+      checkedAt,
+      fundingText_(row.symbol),
+      fundingText_(row.source),
+      fundingText_(row.side),
+      fundingNumber_(row.positionSize),
+      fundingNumber_(row.currentPrice),
+      fundingNumber_(row.entryPrice),
+      fundingNumber_(row.positionValue),
+      fundingNumber_(row.unrealizedPnl),
+      fundingInteger_(row.count),
+      fundingNumber_(row.fundingIntervalHours),
+      fundingNumber_(row.totalFunding),
+      fundingText_(JSON.stringify(row.fundingRecords || [])),
+      fundingText_(JSON.stringify(row.orders || [])),
+      fundingOptionalDate_(row.startTime),
+      fundingOptionalDate_(row.endTime)
+    ];
+  });
+}
+
+function buildFundingHealthRows_(snapshot, checkedAt) {
+  const health = snapshot.hedgeHealth || {};
+  const rows = [];
+  [
+    ["No Protection", health.noProtection || []],
+    ["Funding Loss", health.fundingLoss || []],
+    ["Misaligned", health.misaligned || []]
+  ].forEach(function(group) {
+    group[1].forEach(function(row) {
+      rows.push([
+        checkedAt,
+        group[0],
+        fundingText_(row.symbol),
+        fundingNumber_(row.netFunding),
+        fundingNumber_(row.longSize),
+        fundingNumber_(row.shortSize),
+        fundingNumber_(row.longFunding),
+        fundingNumber_(row.shortFunding),
+        fundingInteger_(row.longOrderCount),
+        fundingInteger_(row.shortOrderCount),
+        fundingText_((row.problems || []).join("; "))
+      ]);
+    });
+  });
+  return rows;
+}
+
+function replaceFundingRows_(workbook, name, headers, rows, options) {
+  const sheet = workbook.getSheetByName(name);
+  if (!sheet) throw new Error("missing_funding_sheet");
+  if (sheet.getFilter()) sheet.getFilter().remove();
+  sheet.clearContents();
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  if (rows.length) sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
+  styleFundingSheet_(sheet, headers.length, rows.length, options);
+}
+
+function appendFundingRun_(workbook, row) {
+  const sheet = workbook.getSheetByName(FUNDING_TABS.runs);
+  if (!sheet) throw new Error("missing_funding_runs_sheet");
+  const headers = FUNDING_HEADERS.runs;
+  if (String(sheet.getRange(1, 1).getDisplayValue() || "") !== headers[0]) {
+    sheet.clearContents();
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  }
+  sheet.appendRow(row);
+  if (sheet.getLastRow() > 1001) sheet.deleteRows(2, sheet.getLastRow() - 1001);
+  styleFundingSheet_(sheet, headers.length, Math.max(0, sheet.getLastRow() - 1), {
+    widths: [170, 90, 80, 85, 115, 90, 95, 340],
+    dateColumns: [1],
+    numericColumns: [3, 4, 5, 6, 7]
+  });
+}
+
+function styleFundingSheet_(sheet, columnCount, rowCount, options) {
+  sheet.getRange(1, 1, 1, columnCount)
+    .setBackground("#303030")
+    .setFontColor("#FFFFFF")
+    .setFontWeight("bold")
+    .setVerticalAlignment("middle")
+    .setWrap(true);
+  sheet.setRowHeight(1, 34);
+  sheet.setFrozenRows(1);
+  sheet.setHiddenGridlines(true);
+  (options.widths || []).forEach(function(width, index) {
+    sheet.setColumnWidth(index + 1, width);
+  });
+  if (rowCount > 0) {
+    sheet.getRange(2, 1, rowCount, columnCount).setVerticalAlignment("middle").setFontSize(10);
+    (options.dateColumns || []).forEach(function(column) {
+      sheet.getRange(2, column, rowCount, 1).setNumberFormat("yyyy-mm-dd hh:mm:ss");
+    });
+    (options.numericColumns || []).forEach(function(column) {
+      sheet.getRange(2, column, rowCount, 1)
+        .setNumberFormat("#,##0.00;[Red]-#,##0.00;0.00");
+    });
+    sheet.getRange(1, 1, rowCount + 1, columnCount).createFilter();
+  }
+}
+
+function fundingDate_(value) {
+  const date = new Date(String(value || ""));
+  if (isNaN(date.getTime())) throw new Error("invalid_funding_date");
+  return date;
+}
+
+function fundingOptionalDate_(value) {
+  if (!value) return "";
+  const date = new Date(String(value));
+  return isNaN(date.getTime()) ? fundingText_(value) : date;
+}
+
+function fundingNumber_(value) {
+  const parsed = Number(value);
+  return isFinite(parsed) ? parsed : 0;
+}
+
+function fundingInteger_(value) {
+  return Math.max(0, Math.floor(fundingNumber_(value)));
+}
+
+function fundingText_(value) {
+  return normalizeCell_(value);
 }
 
 function normalizeSymbol_(value) {
