@@ -9,3 +9,6 @@ services:
     startCommand: npm run relay:start
     healthCheckPath: /health
     autoDeployTrigger: commit
+    envVars:
+      - key: BINANCE_WS_POSITIONS_ONLY
+        value: "true"
