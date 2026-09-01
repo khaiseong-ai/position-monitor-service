@@ -9,6 +9,7 @@ const BINANCE_PROBE_BASES = [
   ["binance", "https://fapi.binance.com"]
 ];
 const BINANCE_WS = "wss://ws-fapi.binance.com/ws-fapi/v1";
+const BINANCE_ORDER_RETRY_DELAYS_MS = [750, 1500];
 const BYBIT_BASE = "https://api.bybit.com";
 const HOUR_MS = 60 * 60 * 1000;
 const FUNDING_MAX_WINDOW_MS = 7 * 24 * HOUR_MS;
@@ -695,7 +696,7 @@ async function fetchBinancePositionScopedState(config, fetchImpl, webSocketFacto
   let orderRows = [];
   let ordersComplete = false;
   try {
-    orderRows = await fetchBinanceOrderRows(config, fetchImpl);
+    orderRows = await fetchBinanceOrderRowsWithRetry(config, fetchImpl);
     ordersComplete = true;
   } catch {
     let orderFailures = 0;
@@ -726,6 +727,20 @@ async function fetchBinanceOrderRows(config, fetchImpl, params = {}) {
     rows.push(...asArray(await binanceSignedGet(config, path, fetchImpl, params)));
   }
   return rows;
+}
+
+async function fetchBinanceOrderRowsWithRetry(config, fetchImpl) {
+  let lastError;
+  for (let attempt = 0; attempt <= BINANCE_ORDER_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      return await fetchBinanceOrderRows(config, fetchImpl);
+    } catch (error) {
+      lastError = error;
+      const delayMs = BINANCE_ORDER_RETRY_DELAYS_MS[attempt];
+      if (delayMs !== undefined) await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  throw lastError || upstreamError("network");
 }
 
 async function fetchBinanceWebSocketState(config, webSocketFactory) {
