@@ -94,6 +94,7 @@ test("authenticated Binance WebSocket diagnostic returns sanitized method result
   });
   assert.equal(sentRequests.length, 4);
   for (const request of sentRequests) {
+    assert.match(request.id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
     assert.equal(request.params.apiKey, "binance-key");
     assert.match(request.params.signature, /^[0-9a-f]{64}$/);
   }

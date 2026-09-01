@@ -345,7 +345,7 @@ async function probeBinanceWebSocket(webSocketFactory) {
 }
 
 async function binanceWebSocketRequest(config, method, webSocketFactory) {
-  const id = `${method}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const id = crypto.randomUUID();
   const params = {
     apiKey: config.apiKey,
     recvWindow: 5000,
