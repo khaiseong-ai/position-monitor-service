@@ -116,6 +116,10 @@ test("fails closed with exchange names and no upstream details", async () => {
   );
   assert.equal(response.status, 502);
   const body = await response.json();
-  assert.deepEqual(body, { ok: false, failed: ["binance"] });
-  assert.doesNotMatch(JSON.stringify(body), /private|451|restriction/);
+  assert.deepEqual(body, {
+    ok: false,
+    failed: ["binance"],
+    failureCodes: { binance: "http_451" }
+  });
+  assert.doesNotMatch(JSON.stringify(body), /private|restriction/);
 });

@@ -67,11 +67,14 @@ export async function handleRequest(request, env = {}, fetchImpl = fetch, webSoc
     fetchBybitState(env, fetchImpl)
   ]);
   const names = ["binance", "bybit"];
-  const failed = results
-    .map((result, index) => result.status === "rejected" ? names[index] : "")
-    .filter(Boolean);
+  const failures = results.flatMap((result, index) => result.status === "rejected"
+    ? [[names[index], safeFailureCode(result.reason)]]
+    : []);
+  const failed = failures.map(([name]) => name);
 
-  if (failed.length > 0) return jsonResponse({ ok: false, failed }, 502);
+  if (failed.length > 0) {
+    return jsonResponse({ ok: false, failed, failureCodes: Object.fromEntries(failures) }, 502);
+  }
 
   return jsonResponse({
     ok: true,
@@ -168,7 +171,7 @@ async function bybitSignedGet(config, path, params, fetchImpl) {
       "X-BAPI-SIGN": signature
     }
   }, fetchImpl, "bybit");
-  if (json.retCode !== 0) throw new Error("bybit upstream rejected request");
+  if (json.retCode !== 0) throw upstreamError(apiFailureCode(json.retCode));
   return json;
 }
 
@@ -177,12 +180,34 @@ async function fetchJson(url, options, fetchImpl, label) {
     ...options,
     signal: AbortSignal.timeout(15000)
   });
-  if (!response.ok) throw new Error(`${label} upstream unavailable`);
+  let json;
   try {
-    return await response.json();
+    json = await response.json();
   } catch {
-    throw new Error(`${label} upstream returned invalid JSON`);
+    if (!response.ok) throw upstreamError(`http_${response.status}`);
+    throw upstreamError("invalid_json");
   }
+  if (!response.ok) {
+    const apiCode = json && typeof json === "object" ? json.code ?? json.retCode : undefined;
+    throw upstreamError(apiCode === undefined ? `http_${response.status}` : apiFailureCode(apiCode));
+  }
+  return json;
+}
+
+function upstreamError(safeCode) {
+  const error = new Error("upstream unavailable");
+  error.safeCode = safeCode;
+  return error;
+}
+
+function apiFailureCode(value) {
+  const normalized = String(value ?? "").replace(/[^0-9-]/g, "");
+  return /^-?\d+$/.test(normalized) ? `api_${normalized}` : "api_rejected";
+}
+
+function safeFailureCode(error) {
+  const code = String(error?.safeCode || "network");
+  return /^[a-z0-9_-]+$/i.test(code) ? code : "network";
 }
 
 async function probeEndpoint(url, fetchImpl) {
