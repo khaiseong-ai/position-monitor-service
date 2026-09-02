@@ -319,7 +319,7 @@ test("rejects unauthenticated Binance WebSocket diagnostics", async () => {
 });
 
 test("rejects unauthenticated funding requests without calling exchanges", async () => {
-  const response = await handleRequest(
+  const response = await handleFundingRelayRequest(
     new Request("https://worker.test/funding", {
       method: "POST",
       body: JSON.stringify({ startTime: 1, endTime: 2 })
@@ -338,34 +338,24 @@ test("returns complete three-day Binance and Bybit funding slots including zero 
   const latestSlot = Date.parse("2026-09-01T00:00:00.000Z");
   let bybitTransactionPages = 0;
 
-  const webSocketFactory = () => {
-    const listeners = new Map();
-    queueMicrotask(() => listeners.get("open")?.());
-    return {
-      addEventListener(name, listener) { listeners.set(name, listener); },
-      send(value) {
-        const request = JSON.parse(value);
-        const result = request.method === "v2/account.position"
-          ? [{
-              symbol: "QQQUSDT",
-              positionAmt: "4",
-              markPrice: "720",
-              entryPrice: "710",
-              notional: "2880",
-              unRealizedProfit: "40",
-              accountAlias: "hidden"
-            }]
-          : [{ asset: "USDT", balance: "100", crossUnPnl: "5", privateField: "hidden" }];
-        queueMicrotask(() => listeners.get("message")?.({
-          data: JSON.stringify({ id: request.id, status: 200, result })
-        }));
-      },
-      close() {}
-    };
-  };
-
   const fetchImpl = async (input) => {
     const url = new URL(input);
+    if (url.pathname === "/fapi/v3/positionRisk") {
+      return Response.json([{
+        symbol: "QQQUSDT",
+        positionAmt: "4",
+        markPrice: "720",
+        entryPrice: "710",
+        notional: "2880",
+        unRealizedProfit: "40",
+        accountAlias: "hidden"
+      }]);
+    }
+    if (url.pathname === "/fapi/v3/balance") {
+      return Response.json([
+        { asset: "USDT", balance: "100", crossUnPnl: "5", privateField: "hidden" }
+      ]);
+    }
     if (url.pathname === "/fapi/v1/income") {
       assert.equal(url.searchParams.get("incomeType"), "FUNDING_FEE");
       return Response.json([{ symbol: "QQQUSDT", time: latestSlot, income: "0.25" }]);
@@ -435,7 +425,7 @@ test("returns complete three-day Binance and Bybit funding slots including zero 
     throw new Error(`unexpected path ${url.pathname}`);
   };
 
-  const response = await handleRequest(
+  const response = await handleFundingRelayRequest(
     new Request("https://worker.test/funding", {
       method: "POST",
       headers: {
@@ -453,11 +443,12 @@ test("returns complete three-day Binance and Bybit funding slots including zero 
     }),
     { PROXY_TOKEN: "test-token" },
     fetchImpl,
-    webSocketFactory
+    () => { throw new Error("funding must not open a websocket"); }
   );
   assert.equal(response.status, 200);
   const body = await response.json();
   assert.equal(body.ok, true);
+  assert.equal(body.failures?.binance, undefined, JSON.stringify(body));
   assert.deepEqual(Object.keys(body.exchanges).sort(), ["binance", "bybit"]);
   assert.equal(body.exchanges.binance.positions[0].count, 9);
   assert.equal(body.exchanges.binance.positions[0].fundingIntervalHours, 8);

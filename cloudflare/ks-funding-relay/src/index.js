@@ -349,23 +349,29 @@ function requiredSecretsFor(names) {
     names.some((name) => secret.startsWith(`${name.toUpperCase()}_`)));
 }
 
-async function fetchBinanceFundingState(env, startTime, endTime, fetchImpl, webSocketFactory) {
+async function fetchBinanceFundingState(env, startTime, endTime, fetchImpl) {
   const config = { apiKey: env.BINANCE_API_KEY, apiSecret: env.BINANCE_API_SECRET };
-  const [positionPayload, balancePayload, incomeRows] = await Promise.all([
-    binanceWebSocketRequest(config, "v2/account.position", webSocketFactory),
-    binanceWebSocketRequest(config, "v2/account.balance", webSocketFactory).catch(() => null),
-    binanceFundingSignedGet(config, "/fapi/v1/income", {
-      incomeType: "FUNDING_FEE",
-      startTime,
-      endTime,
-      limit: FUNDING_PAGE_LIMIT
-    }, fetchImpl)
-  ]);
-  if (Number(positionPayload?.status) !== 200 || !Array.isArray(positionPayload?.result)) {
-    throw upstreamError(apiFailureCode(positionPayload?.error?.code));
-  }
+  // Keep private REST calls sequential so one Sheet refresh cannot burst the Binance limit.
+  const positionRows = await binanceFundingSignedGetWithRetry(
+    config,
+    "/fapi/v3/positionRisk",
+    {},
+    fetchImpl
+  );
+  const balanceRows = await binanceFundingSignedGetWithRetry(
+    config,
+    "/fapi/v3/balance",
+    {},
+    fetchImpl
+  ).catch(() => []);
+  const incomeRows = await binanceFundingSignedGetWithRetry(config, "/fapi/v1/income", {
+    incomeType: "FUNDING_FEE",
+    startTime,
+    endTime,
+    limit: FUNDING_PAGE_LIMIT
+  }, fetchImpl);
 
-  const rawPositions = positionPayload.result.filter((row) => numberValue(row.positionAmt) !== 0);
+  const rawPositions = asArray(positionRows).filter((row) => numberValue(row.positionAmt) !== 0);
   const actualBySymbol = new Map();
   for (const row of asArray(incomeRows)) {
     const symbol = String(row.symbol || "").toUpperCase();
@@ -414,7 +420,7 @@ async function fetchBinanceFundingState(env, startTime, endTime, fetchImpl, webS
   });
 
   const equity = emptyFundingEquity();
-  for (const row of asArray(balancePayload?.result)) {
+  for (const row of asArray(balanceRows)) {
     const asset = String(row.asset || "").toUpperCase();
     if (asset === "USDT" || asset === "USDC") {
       equity.futures[asset] = numberValue(row.balance) + numberValue(row.crossUnPnl);
@@ -462,6 +468,25 @@ async function binanceFundingSignedGet(config, path, params, fetchImpl) {
       }, fetchImpl, "binance");
     } catch (error) {
       lastError = error;
+    }
+  }
+  throw lastError || upstreamError("network");
+}
+
+async function binanceFundingSignedGetWithRetry(config, path, params, fetchImpl) {
+  const delaysMs = [1000, 3000, 8000];
+  let lastError;
+  for (let attempt = 0; attempt <= delaysMs.length; attempt += 1) {
+    try {
+      return await binanceFundingSignedGet(config, path, params, fetchImpl);
+    } catch (error) {
+      lastError = error;
+      const code = safeFailureCode(error);
+      if (code !== "http_429" && code !== "http_418" && code !== "network") throw error;
+      const delayMs = safeRetryAfter(error) === null
+        ? delaysMs[attempt]
+        : Math.max(1000, safeRetryAfter(error) * 1000);
+      if (delayMs !== undefined) await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
   throw lastError || upstreamError("network");
