@@ -5,6 +5,10 @@ import {
   handleRequest,
   verifyGithubOidcToken
 } from "../cloudflare/position-geo-proxy/src/index.js";
+import {
+  dispatchFundingSheet,
+  handleRequest as handleFundingRelayRequest
+} from "../cloudflare/ks-funding-relay/src/index.js";
 
 const ENV = {
   PROXY_TOKEN: "test-token",
@@ -105,6 +109,32 @@ test("dispatches the position workflow without exposing scheduler failures", asy
     assert.doesNotMatch(error.message, /actions-only-token|private response/);
     return true;
   });
+});
+
+test("dispatches the KS funding workflow from an authenticated Sheet button", async () => {
+  let captured;
+  await dispatchFundingSheet({ GITHUB_ACTIONS_TOKEN: "actions-only-token" }, async (url, options) => {
+    captured = { url: String(url), options };
+    return new Response(null, { status: 204 });
+  });
+  assert.equal(captured.url,
+    "https://api.github.com/repos/khaiseong-ai/position-monitor-service/actions/workflows/ks-funding-sheet.yml/dispatches");
+  assert.deepEqual(JSON.parse(captured.options.body), { ref: "main" });
+
+  const unauthorized = await handleFundingRelayRequest(
+    new Request("https://worker.test/dispatch/ks-funding?token=wrong"),
+    { MANUAL_FUNDING_TOKEN: "right" },
+    async () => { throw new Error("must not dispatch"); }
+  );
+  assert.equal(unauthorized.status, 401);
+
+  const accepted = await handleFundingRelayRequest(
+    new Request("https://worker.test/dispatch/ks-funding?token=right"),
+    { MANUAL_FUNDING_TOKEN: "right", GITHUB_ACTIONS_TOKEN: "actions-only-token" },
+    async () => new Response(null, { status: 204 })
+  );
+  assert.equal(accepted.status, 200);
+  assert.match(await accepted.text(), /更新已启动/);
 });
 
 test("rejects unauthenticated state requests without calling exchanges", async () => {

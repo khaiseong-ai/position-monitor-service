@@ -32,7 +32,7 @@ jobs:
       BACKPACK_API_KEY: ${{ secrets.BACKPACK_API_KEY }}
       BACKPACK_API_SECRET: ${{ secrets.BACKPACK_API_SECRET }}
       HYPERLIQUID_WALLET: ${{ secrets.HYPERLIQUID_WALLET }}
-      POSITION_RELAY_URL: ${{ secrets.POSITION_RELAY_URL }}
+      POSITION_RELAY_URL: https://ks-funding-relay.position-monitor-service.workers.dev
       POSITION_RELAY_TOKEN: ${{ secrets.POSITION_RELAY_TOKEN }}
       POSITION_RELAY_EXCHANGES: binance,bybit
       FUNDING_SHEET_WEBAPP_URL: ${{ secrets.POSITION_SHEET_WEBAPP_URL }}
