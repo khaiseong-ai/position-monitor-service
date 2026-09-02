@@ -166,3 +166,60 @@ test("reads and normalizes all three original ignore lists", async () => {
     action: "readIgnoreConfig"
   });
 });
+
+test("retries transient Sheet 404 responses before writing", async () => {
+  const statuses = [404, 404, 200];
+  const delays = [];
+  const fetchImpl = async () => {
+    const status = statuses.shift();
+    return {
+      ok: status === 200,
+      status,
+      json: async () => ({ ok: true })
+    };
+  };
+
+  const result = await writePositionSheet({
+    url: "https://example.test/exec",
+    secret: "secret",
+    snapshot: {
+      sheets: { Summary: [["Key", "Value"]] },
+      run: ["checked", 0, 0, "", "NO", ""]
+    },
+    fetchImpl,
+    sleepImpl: async (delayMs) => delays.push(delayMs)
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(delays, [1000, 2000]);
+});
+
+test("retries transient Sheet network failures when reading ignores", async () => {
+  let attempts = 0;
+  const fetchImpl = async () => {
+    attempts += 1;
+    if (attempts < 3) throw new Error("temporary network failure");
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        ok: true,
+        ignores: {
+          ignoreSymbols: ["BTC"],
+          orderIgnoreSymbols: [],
+          missingTpSlIgnoreSymbols: []
+        }
+      })
+    };
+  };
+
+  const result = await readPositionSheetIgnores({
+    url: "https://example.test/exec",
+    secret: "secret",
+    fetchImpl,
+    sleepImpl: async () => {}
+  });
+
+  assert.equal(attempts, 3);
+  assert.deepEqual(result.ignoreSymbols, ["BTC"]);
+});
