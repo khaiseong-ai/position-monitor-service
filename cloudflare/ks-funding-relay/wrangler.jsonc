@@ -5,7 +5,7 @@
   "compatibility_date": "2026-09-01",
   "workers_dev": true,
   "placement": {
-    "region": "aws:ap-northeast-1"
+    "region": "aws:ap-southeast-3"
   },
   "observability": {
     "enabled": false

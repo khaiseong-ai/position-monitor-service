@@ -131,10 +131,20 @@ test("dispatches the KS funding workflow from an authenticated Sheet button", as
   const accepted = await handleFundingRelayRequest(
     new Request("https://worker.test/dispatch/ks-funding?token=right"),
     { MANUAL_FUNDING_TOKEN: "right", GITHUB_ACTIONS_TOKEN: "actions-only-token" },
-    async () => new Response(null, { status: 204 })
+    async (url) => String(url).includes("fapi.binance.com")
+      ? Response.json({ serverTime: Date.now() })
+      : new Response(null, { status: 204 })
   );
   assert.equal(accepted.status, 200);
   assert.match(await accepted.text(), /更新已启动/);
+
+  const unavailable = await handleFundingRelayRequest(
+    new Request("https://worker.test/dispatch/ks-funding?token=right"),
+    { MANUAL_FUNDING_TOKEN: "right", GITHUB_ACTIONS_TOKEN: "actions-only-token" },
+    async () => new Response("blocked", { status: 403 })
+  );
+  assert.equal(unavailable.status, 503);
+  assert.match(await unavailable.text(), /旧数据没有被覆盖/);
 });
 
 test("rejects unauthenticated state requests without calling exchanges", async () => {
