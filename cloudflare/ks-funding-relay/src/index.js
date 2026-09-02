@@ -102,6 +102,26 @@ export async function dispatchFundingSheet(env = {}, fetchImpl = fetch) {
   }
 }
 
+export async function dispatchFundingClear(env = {}, fetchImpl = fetch) {
+  const token = String(env.GITHUB_ACTIONS_TOKEN || "").trim();
+  if (!token) throw new Error("GitHub Actions dispatcher is not configured");
+
+  const response = await fetchImpl(GITHUB_FUNDING_DISPATCH_URL, {
+    method: "POST",
+    headers: {
+      accept: "application/vnd.github+json",
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+      "user-agent": "ks-funding-sheet-button/1.0",
+      "x-github-api-version": "2022-11-28"
+    },
+    body: JSON.stringify({ ref: "main", inputs: { clear_only: "true" } })
+  });
+  if (![200, 204].includes(response.status)) {
+    throw upstreamError(`github_http_${response.status}`);
+  }
+}
+
 export async function handleRequest(request, env = {}, fetchImpl = fetch, webSocketFactory = defaultWebSocketFactory) {
   const url = new URL(request.url);
 
@@ -114,10 +134,11 @@ export async function handleRequest(request, env = {}, fetchImpl = fetch, webSoc
     try {
       const binanceStatus = await probeEndpoint(`${BINANCE_REST_BASES[0]}/fapi/v1/time`, fetchImpl);
       if (binanceStatus !== "http_200") {
+        await dispatchFundingClear(env, fetchImpl);
         return new Response(
           "<!doctype html><meta charset=\"utf-8\"><title>KS Funding</title>" +
             "<style>body{font:18px system-ui;margin:48px;color:#202124}strong{color:#b3261e}</style>" +
-            "<strong>暂未启动更新</strong><p>Binance API 当前不可用；旧数据没有被覆盖，也不会产生失败邮件。</p>",
+            "<strong>更新失败</strong><p>Binance API 当前不可用；系统正在清空旧数据并记录本次检查时间。</p>",
           { status: 503, headers: { ...NO_STORE_HEADERS, "content-type": "text/html; charset=utf-8" } }
         );
       }

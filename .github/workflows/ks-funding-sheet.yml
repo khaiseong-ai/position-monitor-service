@@ -2,6 +2,12 @@ name: KS Vercel Funding Sheet
 
 on:
   workflow_dispatch:
+    inputs:
+      clear_only:
+        description: Clear stale Sheet data without querying exchanges
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -37,23 +43,56 @@ jobs:
       FUNDING_SHEET_SECRET: ${{ secrets.POSITION_SHEET_SECRET }}
 
     steps:
+      - name: Clear stale funding Sheet data
+        if: ${{ inputs.clear_only == true }}
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          const endpoint = String(process.env.FUNDING_SHEET_WEBAPP_URL || "").trim();
+          const secret = String(process.env.FUNDING_SHEET_SECRET || "").trim();
+          if (!endpoint || !secret) throw new Error("funding_sheet_not_configured");
+          const snapshot = {
+            success: true,
+            checkedAt: new Date().toISOString(),
+            elapsedMs: 0,
+            totalEquity: 0,
+            equity: [],
+            positions: [],
+            hedgeHealth: { noProtection: [], fundingLoss: [], misaligned: [] }
+          };
+          const response = await fetch(endpoint, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ action: "writeAccountFunding", secret, snapshot })
+          });
+          const body = await response.json().catch(() => null);
+          if (!response.ok || body?.ok !== true || Number(body?.rowsWritten) !== 0) {
+            throw new Error("funding_sheet_clear_failed");
+          }
+          NODE
+
       - name: Check out funding source
+        if: ${{ inputs.clear_only != true }}
         uses: actions/checkout@v4
         with:
           repository: khaiseong-ai/vercel-binance-funding
           ref: main
 
       - name: Set up Node.js
+        if: ${{ inputs.clear_only != true }}
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
 
       - name: Install dependencies
+        if: ${{ inputs.clear_only != true }}
         run: npm ci
 
       - name: Validate funding source
+        if: ${{ inputs.clear_only != true }}
         run: npm run check && npm test
 
       - name: Refresh independent funding Sheet
+        if: ${{ inputs.clear_only != true }}
         run: npm run snapshot:sheet

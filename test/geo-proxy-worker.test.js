@@ -6,6 +6,7 @@ import {
   verifyGithubOidcToken
 } from "../cloudflare/position-geo-proxy/src/index.js";
 import {
+  dispatchFundingClear,
   dispatchFundingSheet,
   handleRequest as handleFundingRelayRequest
 } from "../cloudflare/ks-funding-relay/src/index.js";
@@ -138,13 +139,36 @@ test("dispatches the KS funding workflow from an authenticated Sheet button", as
   assert.equal(accepted.status, 200);
   assert.match(await accepted.text(), /更新已启动/);
 
+  let clearRequest;
   const unavailable = await handleFundingRelayRequest(
     new Request("https://worker.test/dispatch/ks-funding?token=right"),
-    { MANUAL_FUNDING_TOKEN: "right", GITHUB_ACTIONS_TOKEN: "actions-only-token" },
-    async () => new Response("blocked", { status: 403 })
+    {
+      MANUAL_FUNDING_TOKEN: "right",
+      GITHUB_ACTIONS_TOKEN: "actions-only-token"
+    },
+    async (url, options = {}) => {
+      if (String(url).includes("fapi.binance.com")) return new Response("blocked", { status: 403 });
+      clearRequest = { url: String(url), options };
+      return new Response(null, { status: 204 });
+    }
   );
   assert.equal(unavailable.status, 503);
-  assert.match(await unavailable.text(), /旧数据没有被覆盖/);
+  assert.match(await unavailable.text(), /正在清空旧数据/);
+  assert.equal(clearRequest.url,
+    "https://api.github.com/repos/khaiseong-ai/position-monitor-service/actions/workflows/ks-funding-sheet.yml/dispatches");
+  const clearBody = JSON.parse(clearRequest.options.body);
+  assert.deepEqual(clearBody, { ref: "main", inputs: { clear_only: "true" } });
+  assert.match(clearRequest.options.headers.authorization, /^Bearer /);
+});
+
+test("rejects a failed funding clear dispatch without exposing the token", async () => {
+  await assert.rejects(() => dispatchFundingClear({
+    GITHUB_ACTIONS_TOKEN: "actions-only-token"
+  }, async () => new Response("private error", { status: 500 })), (error) => {
+    assert.equal(error.safeCode, "github_http_500");
+    assert.doesNotMatch(error.message, /actions-only-token|private error/);
+    return true;
+  });
 });
 
 test("rejects unauthenticated state requests without calling exchanges", async () => {
