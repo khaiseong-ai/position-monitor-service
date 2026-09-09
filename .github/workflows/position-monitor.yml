@@ -31,7 +31,7 @@ jobs:
       BYBIT_API_SECRET: ${{ secrets.BYBIT_API_SECRET }}
       MEXC_API_KEY: ${{ secrets.MEXC_API_KEY }}
       MEXC_API_SECRET: ${{ secrets.MEXC_API_SECRET }}
-      MEXC_REST_BASE: https://contract.mexc.com
+      MEXC_REST_BASE: https://api.mexc.com
       MEXC_SIZE_MULTIPLIERS: ${{ secrets.MEXC_SIZE_MULTIPLIERS }}
       BITGET_API_KEY: ${{ secrets.BITGET_API_KEY }}
       BITGET_API_SECRET: ${{ secrets.BITGET_API_SECRET }}
