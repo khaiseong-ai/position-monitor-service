@@ -8,6 +8,7 @@ import {
   failedExchangeNames,
   missingRequiredSecrets,
   readPositionSheetIgnores,
+  unexpectedEmptyPositionSources,
   writePositionSheet
 } from "../lib/github-monitor.js";
 
@@ -107,6 +108,15 @@ test("parses notification flags", () => {
   assert.equal(envFlag("true"), true);
   assert.equal(envFlag("1"), true);
   assert.equal(envFlag("false"), false);
+});
+
+test("detects required exchanges that silently return no positions", () => {
+  const positions = [
+    { source: "binance" },
+    { source: "mexc" }
+  ];
+  assert.deepEqual(unexpectedEmptyPositionSources(positions, "mexc,phemex,MEXC"), ["phemex"]);
+  assert.deepEqual(unexpectedEmptyPositionSources(positions, ""), []);
 });
 
 test("posts only the expected multi-tab position payload", async () => {

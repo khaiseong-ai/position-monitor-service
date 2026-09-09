@@ -7,6 +7,7 @@ import {
   failedExchangeNames,
   missingRequiredSecrets,
   readPositionSheetIgnores,
+  unexpectedEmptyPositionSources,
   writePositionSheet
 } from "../lib/github-monitor.js";
 import { sendTelegram } from "../lib/telegram.js";
@@ -32,6 +33,11 @@ async function run() {
     ...ignores
   });
   const config = buildConfig();
+  const emptySources = unexpectedEmptyPositionSources(
+    state.positions,
+    process.env.POSITION_REQUIRED_NONEMPTY_EXCHANGES
+  );
+  state.errors.push(...emptySources.map((source) => `${source}: empty position response`));
 
   if (state.errors.length > 0) {
     const failed = failedExchangeNames(state.errors);

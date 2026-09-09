@@ -1,3 +1,7 @@
+import { buildConfig } from "../lib/config.js";
+import { fetchMexc, fetchPhemex } from "../lib/exchanges.js";
+import { failedExchangeDiagnostics } from "../lib/github-monitor.js";
+
 const endpoints = [
   ["binance_fapi", "https://fapi.binance.com/fapi/v1/time"],
   ["binance_fapi1", "https://fapi1.binance.com/fapi/v1/time"],
@@ -20,6 +24,20 @@ for (const [name, url] of endpoints) {
     // The status category is enough for diagnosing runner reachability.
   }
   console.log(`${name}=${result}`);
+}
+
+const config = buildConfig();
+for (const [name, fetchPositions] of [
+  ["mexc", () => fetchMexc(config.exchanges.mexc)],
+  ["phemex", () => fetchPhemex(config.exchanges.phemex)]
+]) {
+  try {
+    const positions = await fetchPositions();
+    console.log(`${name}_private_diagnostic=${JSON.stringify({ status: "ok", positions: positions.length })}`);
+  } catch (error) {
+    const diagnostic = failedExchangeDiagnostics([`${name}: ${error?.message || String(error)}`])[0] || `${name}=unknown`;
+    console.log(`${name}_private_diagnostic=${JSON.stringify({ status: "error", category: diagnostic.split("=")[1] || "unknown" })}`);
+  }
 }
 
 const relayUrl = String(process.env.POSITION_RELAY_URL || "").trim();
