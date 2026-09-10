@@ -55,7 +55,7 @@ jobs:
       POSITION_SHEET_WEBAPP_URL: ${{ secrets.POSITION_SHEET_WEBAPP_URL }}
       POSITION_SHEET_SECRET: ${{ secrets.POSITION_SHEET_SECRET }}
       POSITION_NOTIFY: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.notify) }}
-      POSITION_REQUIRED_NONEMPTY_EXCHANGES: mexc,phemex
+      POSITION_REQUIRED_NONEMPTY_EXCHANGES: mexc
       TOLERANCE: "0"
 
     steps:
