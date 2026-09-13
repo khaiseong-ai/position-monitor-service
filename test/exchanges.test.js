@@ -1,11 +1,31 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { fetchMexc, fetchPhemex } from "../lib/exchanges.js";
-import { normalizeSymbol } from "../lib/position-utils.js";
+import { fetchBinance, fetchMexc, fetchPhemex } from "../lib/exchanges.js";
+import { normalizeSymbol, symbolUnitMultiplier } from "../lib/position-utils.js";
 
 test("normalizes 1000LUNC to LUNC", () => {
   assert.equal(normalizeSymbol("1000LUNCUSDT"), "LUNC");
   assert.equal(normalizeSymbol("LUNC_USDT_PERP"), "LUNC");
+  assert.equal(symbolUnitMultiplier("1000LUNCUSDT"), 1000);
+  assert.equal(symbolUnitMultiplier("LUNCUSDT"), 1);
+});
+
+test("converts Binance 1000LUNC contracts to LUNC base units", async (t) => {
+  t.mock.method(globalThis, "fetch", async () => new Response(JSON.stringify([{
+    symbol: "1000LUNCUSDT",
+    positionAmt: "-60000",
+    markPrice: "0.123"
+  }])));
+
+  const [position] = await fetchBinance({
+    apiKey: "key",
+    apiSecret: "secret",
+    restBase: "https://example.test"
+  });
+  assert.equal(position.symbol, "LUNC");
+  assert.equal(position.side, "short");
+  assert.equal(position.size, 60000000);
+  assert.equal(position.price, 0.000123);
 });
 
 const config = {
