@@ -7,6 +7,8 @@ test("normalizes cross-exchange aliases and derivative suffixes", () => {
   assert.equal(normalizePair("DATA_USDT_PERP"), "DATA");
   assert.equal(normalizePair("MONAD_USDT"), "MON");
   assert.equal(normalizePair("MON-USDC"), "MON");
+  assert.equal(normalizePair("1000LUNCUSDT"), "LUNC");
+  assert.equal(normalizePair("LUNC_USDT_PERP"), "LUNC");
 });
 
 test("merges Bybit partial closes into one closed position", () => {

@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { fetchMexc, fetchPhemex } from "../lib/exchanges.js";
+import { normalizeSymbol } from "../lib/position-utils.js";
+
+test("normalizes 1000LUNC to LUNC", () => {
+  assert.equal(normalizeSymbol("1000LUNCUSDT"), "LUNC");
+  assert.equal(normalizeSymbol("LUNC_USDT_PERP"), "LUNC");
+});
 
 const config = {
   apiKey: "key",
