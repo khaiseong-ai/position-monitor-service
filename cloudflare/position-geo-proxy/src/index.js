@@ -351,15 +351,16 @@ async function fetchBinanceFundingState(env, startTime, endTime, fetchImpl, webS
     const intervalHours = inferFundingInterval(schedule.length > 1 ? schedule : actual) || 8;
     const records = buildFundingRecords(actual, schedule, intervalHours, startTime, endTime);
     const signedSize = numberValue(row.positionAmt);
-    const size = Math.abs(signedSize);
-    const markPrice = numberValue(row.markPrice);
+    const multiplier = symbolUnitMultiplier(rawSymbol);
+    const size = Math.abs(signedSize) * multiplier;
+    const markPrice = numberValue(row.markPrice) / multiplier;
     return {
       source: "binance",
       symbol: normalizeSymbol(rawSymbol),
       rawSymbol,
       side: signedSize > 0 ? "long" : "short",
       currentPrice: markPrice,
-      entryPrice: numberValue(row.entryPrice),
+      entryPrice: numberValue(row.entryPrice) / multiplier,
       positionSize: size,
       positionValue: Math.abs(numberValue(row.notional)) || size * markPrice,
       unrealizedPnl: numberValue(row.unRealizedProfit ?? row.unrealizedProfit),
@@ -1180,26 +1181,28 @@ function decodeBase64Url(value) {
 }
 
 function normalizePosition({ symbol, source, side, size, price }) {
-  const numericSize = Math.abs(numberValue(size));
+  const multiplier = source === "binance" ? symbolUnitMultiplier(symbol) : 1;
+  const numericSize = Math.abs(numberValue(size)) * multiplier;
   if (!symbol || numericSize === 0 || !["long", "short"].includes(side)) return null;
   return {
     symbol: normalizeSymbol(symbol),
     source,
     side,
     size: numericSize,
-    price: numberValue(price)
+    price: numberValue(price) / multiplier
   };
 }
 
 function normalizeOrder({ symbol, source, side, size, price, triggerPrice, type, status }) {
-  const numericPrice = numberValue(price);
-  const numericTriggerPrice = numberValue(triggerPrice);
+  const multiplier = source === "binance" ? symbolUnitMultiplier(symbol) : 1;
+  const numericPrice = numberValue(price) / multiplier;
+  const numericTriggerPrice = numberValue(triggerPrice) / multiplier;
   if (!symbol || (!numericPrice && !numericTriggerPrice)) return null;
   return {
     symbol: normalizeSymbol(symbol),
     source,
     side: String(side || "").toLowerCase(),
-    size: Math.abs(numberValue(size)),
+    size: Math.abs(numberValue(size)) * multiplier,
     price: numericPrice,
     triggerPrice: numericTriggerPrice,
     type: String(type || ""),
@@ -1214,8 +1217,12 @@ function normalizeSymbol(symbol) {
     previous = normalized;
     normalized = normalized.replace(/(STOCK|USDT|USDC|USD|PERP|SWAP)$/u, "");
   }
-  const aliases = { BROCCOLI714: "BROCCOLI", MONAD: "MON", PUMPFUN: "PUMP" };
+  const aliases = { BROCCOLI714: "BROCCOLI", MONAD: "MON", PUMPFUN: "PUMP", "1000LUNC": "LUNC" };
   return aliases[normalized] || normalized;
+}
+
+function symbolUnitMultiplier(symbol) {
+  return String(symbol || "").toUpperCase().includes("1000LUNC") ? 1000 : 1;
 }
 
 function numberValue(value) {

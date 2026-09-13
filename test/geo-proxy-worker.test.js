@@ -501,11 +501,15 @@ test("returns only normalized Binance and Bybit state", async () => {
     if (url.pathname === "/fapi/v3/positionRisk") {
       return Response.json([
         { symbol: "BTCUSDT", positionAmt: "2", markPrice: "100", accountAlias: "private" },
+        { symbol: "1000LUNCUSDT", positionAmt: "-60000", markPrice: "0.05039" },
         { symbol: "ETHUSDT", positionAmt: "0", markPrice: "10" }
       ]);
     }
     if (url.pathname === "/fapi/v1/openOrders") {
-      return Response.json([{ symbol: "BTCUSDT", side: "SELL", origQty: "2", price: "130", type: "LIMIT", status: "NEW" }]);
+      return Response.json([
+        { symbol: "BTCUSDT", side: "SELL", origQty: "2", price: "130", type: "LIMIT", status: "NEW" },
+        { symbol: "1000LUNCUSDT", side: "BUY", origQty: "60000", price: "0.06", type: "LIMIT", status: "NEW" }
+      ]);
     }
     if (url.pathname === "/fapi/v1/openAlgoOrders") return Response.json([]);
     if (url.pathname === "/v5/position/list") {
@@ -537,10 +541,16 @@ test("returns only normalized Binance and Bybit state", async () => {
   assert.equal(body.ok, true);
   assert.deepEqual(body.positions, [
     { symbol: "BTC", source: "binance", side: "long", size: 2, price: 100 },
+    { symbol: "LUNC", source: "binance", side: "short", size: 60000000, price: 0.00005039 },
     { symbol: "SOL", source: "bybit", side: "short", size: 3, price: 20 }
   ]);
-  assert.equal(body.orders.length, 2);
-  assert.equal(body.orders[1].triggerPrice, 25);
+  assert.equal(body.orders.length, 3);
+  assert.deepEqual({ ...body.orders[1], price: 0 }, {
+    symbol: "LUNC", source: "binance", side: "buy", size: 60000000,
+    price: 0, triggerPrice: 0, type: "LIMIT", status: "NEW"
+  });
+  assert.ok(Math.abs(body.orders[1].price - 0.00006) < 1e-12);
+  assert.equal(body.orders[2].triggerPrice, 25);
   assert.doesNotMatch(JSON.stringify(body), /private|accountAlias|accountId/);
 });
 
