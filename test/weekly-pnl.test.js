@@ -9,6 +9,12 @@ test("normalizes cross-exchange aliases and derivative suffixes", () => {
   assert.equal(normalizePair("MON-USDC"), "MON");
   assert.equal(normalizePair("1000LUNCUSDT"), "LUNC");
   assert.equal(normalizePair("LUNC_USDT_PERP"), "LUNC");
+  for (const symbol of ["INTC", "INTC.US", "INTC.US_USDC_PERP", "INTCSTOCK_USDT"]) {
+    assert.equal(normalizePair(symbol), "INTC");
+  }
+  for (const symbol of ["TRUMP", "TRUMPOFFICIAL", "TRUMPOFFICIAL_USDT", "TRUMP_USDC_PERP"]) {
+    assert.equal(normalizePair(symbol), "TRUMP");
+  }
 });
 
 test("merges Bybit partial closes into one closed position", () => {
