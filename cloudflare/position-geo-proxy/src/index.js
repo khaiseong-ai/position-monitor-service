@@ -1181,7 +1181,7 @@ function decodeBase64Url(value) {
 }
 
 function normalizePosition({ symbol, source, side, size, price }) {
-  const multiplier = source === "binance" ? symbolUnitMultiplier(symbol) : 1;
+  const multiplier = ["binance", "bybit"].includes(source) ? symbolUnitMultiplier(symbol) : 1;
   const numericSize = Math.abs(numberValue(size)) * multiplier;
   if (!symbol || numericSize === 0 || !["long", "short"].includes(side)) return null;
   return {
@@ -1194,7 +1194,7 @@ function normalizePosition({ symbol, source, side, size, price }) {
 }
 
 function normalizeOrder({ symbol, source, side, size, price, triggerPrice, type, status }) {
-  const multiplier = source === "binance" ? symbolUnitMultiplier(symbol) : 1;
+  const multiplier = ["binance", "bybit"].includes(source) ? symbolUnitMultiplier(symbol) : 1;
   const numericPrice = numberValue(price) / multiplier;
   const numericTriggerPrice = numberValue(triggerPrice) / multiplier;
   if (!symbol || (!numericPrice && !numericTriggerPrice)) return null;

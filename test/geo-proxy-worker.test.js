@@ -514,13 +514,13 @@ test("returns only normalized Binance and Bybit state", async () => {
     if (url.pathname === "/fapi/v1/openAlgoOrders") return Response.json([]);
     if (url.pathname === "/v5/position/list") {
       const rows = url.searchParams.get("settleCoin") === "USDT"
-        ? [{ symbol: "SOLUSDT", side: "Sell", size: "3", markPrice: "20", accountId: "private" }]
+        ? [{ symbol: "1000LUNCUSDT", side: "Sell", size: "160000", markPrice: "0.123", accountId: "private" }]
         : [];
       return Response.json({ retCode: 0, result: { list: rows } });
     }
     if (url.pathname === "/v5/order/realtime") {
       const rows = url.searchParams.get("settleCoin") === "USDT"
-        ? [{ symbol: "SOLUSDT", side: "Buy", qty: "3", price: "0", triggerPrice: "25", orderType: "Market", orderStatus: "Untriggered" }]
+        ? [{ symbol: "1000LUNCUSDT", side: "Buy", qty: "160000", price: "0", triggerPrice: "0.18", orderType: "Market", orderStatus: "Untriggered" }]
         : [];
       assert.equal(url.searchParams.has("orderFilter"), false);
       return Response.json({ retCode: 0, result: { list: rows } });
@@ -542,7 +542,7 @@ test("returns only normalized Binance and Bybit state", async () => {
   assert.deepEqual(body.positions, [
     { symbol: "BTC", source: "binance", side: "long", size: 2, price: 100 },
     { symbol: "LUNC", source: "binance", side: "short", size: 60000000, price: 0.00005039 },
-    { symbol: "SOL", source: "bybit", side: "short", size: 3, price: 20 }
+    { symbol: "LUNC", source: "bybit", side: "short", size: 160000000, price: 0.000123 }
   ]);
   assert.equal(body.orders.length, 3);
   assert.deepEqual({ ...body.orders[1], price: 0 }, {
@@ -550,7 +550,8 @@ test("returns only normalized Binance and Bybit state", async () => {
     price: 0, triggerPrice: 0, type: "LIMIT", status: "NEW"
   });
   assert.ok(Math.abs(body.orders[1].price - 0.00006) < 1e-12);
-  assert.equal(body.orders[2].triggerPrice, 25);
+  assert.ok(Math.abs(body.orders[2].triggerPrice - 0.00018) < 1e-15);
+  assert.equal(body.orders[2].size, 160000000);
   assert.doesNotMatch(JSON.stringify(body), /private|accountAlias|accountId/);
 });
 

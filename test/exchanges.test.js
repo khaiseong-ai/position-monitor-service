@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { fetchBinance, fetchMexc, fetchPhemex } from "../lib/exchanges.js";
+import { fetchBinance, fetchBybit, fetchBybitOrders, fetchMexc, fetchPhemex } from "../lib/exchanges.js";
 import { normalizeSymbol, symbolUnitMultiplier } from "../lib/position-utils.js";
 
 test("normalizes 1000LUNC to LUNC", () => {
@@ -35,6 +35,26 @@ const config = {
   currency: "USDT",
   sizeMultipliers: {}
 };
+
+test("converts Bybit bundled LUNC positions and orders exactly once", async (t) => {
+  t.mock.method(globalThis, "fetch", async () => Response.json({ retCode: 0, result: { list: [
+    { symbol: "1000LUNCUSDT", side: "Sell", size: "160000", qty: "160000", markPrice: "0.123", price: "0.2", triggerPrice: "0.18" },
+    { symbol: "LUNCUSDT", side: "Buy", size: "160000000", qty: "160000000", markPrice: "0.000123", price: "0.0002", triggerPrice: "0.00018" }
+  ] } }));
+  const bybitConfig = { ...config, settleCoins: ["USDT"] };
+  const positions = await fetchBybit(bybitConfig);
+  for (const position of positions) {
+    assert.equal(position.symbol, "LUNC");
+    assert.equal(position.size, 160000000);
+    assert.equal(position.price, 0.000123);
+  }
+  const orders = await fetchBybitOrders(bybitConfig);
+  for (const order of orders) {
+    assert.equal(order.size, 160000000);
+    assert.equal(order.price, 0.0002);
+    assert.ok(Math.abs(order.triggerPrice - 0.00018) < 1e-15);
+  }
+});
 
 test("rejects an HTTP 200 MEXC API error instead of treating it as no positions", async (t) => {
   t.mock.method(globalThis, "fetch", async (url) => {
