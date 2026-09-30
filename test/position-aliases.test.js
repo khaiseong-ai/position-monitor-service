@@ -3,6 +3,16 @@ import test from "node:test";
 import { normalizeSymbol, makePosition, analyzePositions } from "../lib/position-utils.js";
 import { normalizePair } from "../lib/weekly-pnl.js";
 
+test("maps only the mkts USBOND contract to its TLT display symbol", () => {
+  assert.equal(normalizeSymbol("mkts:USBOND"), "TLT");
+  assert.equal(normalizeSymbol("USBOND"), "USBOND");
+  assert.equal(normalizeSymbol("other:USBOND"), "USBOND");
+  assert.deepEqual(analyzePositions([
+    makePosition({ symbol: "mkts:USBOND", source: "hyperliquid", side: "long", size: 40 }),
+    makePosition({ symbol: "TLT_USDT", source: "mexc", side: "short", size: 40 })
+  ]).alerts, []);
+});
+
 test("META.US aliases balance without scaling in positions and weekly PNL", () => {
   for (const symbol of ["META", "META.US", "META.US_USDC_PERP", "METASTOCK_USDT"]) {
     assert.equal(normalizeSymbol(symbol), "META");

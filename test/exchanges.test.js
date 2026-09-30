@@ -13,8 +13,8 @@ test("includes mkts TLT positions and conditional orders", async (t) => {
     seen.push(`${body.type}:${body.dex || ""}`);
     const match = body.dex === "mkts";
     return Response.json(body.type === "clearinghouseState"
-      ? { assetPositions: match ? [{ position: { coin: "mkts:TLT", szi: "40", positionValue: "3140" } }] : [] }
-      : match ? [{ coin: "mkts:TLT", side: "A", sz: "40", triggerPx: "200", orderType: "Take Profit Market", isTrigger: true }] : []);
+      ? { assetPositions: match ? [{ position: { coin: "mkts:USBOND", szi: "40", positionValue: "3140" } }] : [] }
+      : match ? [{ coin: "mkts:USBOND", side: "A", sz: "40", triggerPx: "200", orderType: "Take Profit Market", isTrigger: true }] : []);
   });
   const config = { wallet: "test-wallet", restBase: "https://example.test", dexes };
   const positions = await fetchHyperliquid(config);
