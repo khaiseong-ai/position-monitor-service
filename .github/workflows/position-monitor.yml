@@ -45,7 +45,7 @@ jobs:
       PHEMEX_CURRENCY: USDT
       HYPERLIQUID_WALLET: ${{ secrets.HYPERLIQUID_WALLET }}
       HYPERLIQUID_REST_BASE: https://api.hyperliquid.xyz
-      HYPERLIQUID_DEXS: xyz
+      HYPERLIQUID_DEXS: xyz,mkts
       BACKPACK_API_KEY: ${{ secrets.BACKPACK_API_KEY }}
       BACKPACK_API_SECRET: ${{ secrets.BACKPACK_API_SECRET }}
       BACKPACK_REST_BASE: https://api.backpack.exchange

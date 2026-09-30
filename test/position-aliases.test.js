@@ -3,6 +3,19 @@ import test from "node:test";
 import { normalizeSymbol, makePosition, analyzePositions } from "../lib/position-utils.js";
 import { normalizePair } from "../lib/weekly-pnl.js";
 
+test("META.US aliases balance without scaling in positions and weekly PNL", () => {
+  for (const symbol of ["META", "META.US", "META.US_USDC_PERP", "METASTOCK_USDT"]) {
+    assert.equal(normalizeSymbol(symbol), "META");
+    assert.equal(normalizePair(symbol), "META");
+  }
+  const positions = [
+    makePosition({ symbol: "METAUSDT", source: "bitget", side: "long", size: 12, price: 500 }),
+    makePosition({ symbol: "META.US_USDC_PERP", source: "backpack", side: "short", size: 12, price: 501 })
+  ];
+  assert.deepEqual(positions.map(p => [p.size, p.price]), [[12, 500], [12, 501]]);
+  assert.deepEqual(analyzePositions(positions).alerts, []);
+});
+
 test("AMZN aliases balance 1:1 in positions and weekly PNL", () => {
   const symbols = ["AMZN", "AMZN.US", "AMZN.US_USDC_PERP", "AMZNSTOCK_USDT"];
   for (const symbol of symbols) {

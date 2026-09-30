@@ -1,7 +1,32 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { fetchBinance, fetchBybit, fetchBybitOrders, fetchMexc, fetchPhemex } from "../lib/exchanges.js";
+import { fetchBinance, fetchBybit, fetchBybitOrders, fetchHyperliquid, fetchHyperliquidOrders, fetchMexc, fetchPhemex } from "../lib/exchanges.js";
 import { normalizeSymbol, symbolUnitMultiplier } from "../lib/position-utils.js";
+import { buildConfig } from "../lib/config.js";
+
+test("includes mkts TLT positions and conditional orders", async (t) => {
+  const dexes = buildConfig().exchanges.hyperliquid.dexes;
+  assert.ok(dexes.includes("mkts"));
+  const seen = [];
+  t.mock.method(globalThis, "fetch", async (_url, options) => {
+    const body = JSON.parse(options.body);
+    seen.push(`${body.type}:${body.dex || ""}`);
+    const match = body.dex === "mkts";
+    return Response.json(body.type === "clearinghouseState"
+      ? { assetPositions: match ? [{ position: { coin: "mkts:TLT", szi: "40", positionValue: "3140" } }] : [] }
+      : match ? [{ coin: "mkts:TLT", side: "A", sz: "40", triggerPx: "200", orderType: "Take Profit Market", isTrigger: true }] : []);
+  });
+  const config = { wallet: "test-wallet", restBase: "https://example.test", dexes };
+  const positions = await fetchHyperliquid(config);
+  assert.equal(positions[0].symbol, "TLT");
+  assert.equal(positions[0].size, 40);
+  assert.equal(positions[0].side, "long");
+  const orders = await fetchHyperliquidOrders(config, positions);
+  assert.equal(orders[0].symbol, "TLT");
+  assert.equal(orders[0].triggerPrice, 200);
+  assert.ok(seen.includes("clearinghouseState:xyz"));
+  assert.ok(seen.includes("frontendOpenOrders:mkts"));
+});
 
 test("normalizes 1000LUNC to LUNC", () => {
   assert.equal(normalizeSymbol("1000LUNCUSDT"), "LUNC");
