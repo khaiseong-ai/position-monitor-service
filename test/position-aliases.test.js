@@ -3,6 +3,23 @@ import test from "node:test";
 import { normalizeSymbol, makePosition, analyzePositions } from "../lib/position-utils.js";
 import { normalizePair } from "../lib/weekly-pnl.js";
 
+for (const base of ["CRCL", "MU"]) {
+  test(base + " aliases balance 1:1 in positions and weekly PNL", () => {
+    for (const symbol of [base, base + ".US", base + ".US_USDC_PERP", base + "STOCK_USDT"]) {
+      assert.equal(normalizeSymbol(symbol), base);
+      assert.equal(normalizePair(symbol), base);
+    }
+    const positions = [
+      makePosition({ symbol: base + "USDT", source: "bitget", side: "long", size: 30, price: 100 }),
+      makePosition({ symbol: base + ".US_USDC_PERP", source: "backpack", side: "short", size: 30, price: 101 })
+    ];
+    assert.deepEqual(positions.map(p => [p.size, p.price]), [[30, 100], [30, 101]]);
+    assert.deepEqual(analyzePositions(positions).alerts, []);
+    positions[1].size = 29;
+    assert.equal(analyzePositions(positions).alerts.length, 1);
+  });
+}
+
 test("maps only the mkts USBOND contract to its TLT display symbol", () => {
   assert.equal(normalizeSymbol("mkts:USBOND"), "TLT");
   assert.equal(normalizeSymbol("USBOND"), "USBOND");
