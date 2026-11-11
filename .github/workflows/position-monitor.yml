@@ -22,6 +22,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
+      LIGHTER_ENABLED: "true"
+      LIGHTER_READ_TOKEN: ${{ secrets.LIGHTER_READ_TOKEN }}
       POSITION_RELAY_URL: ${{ secrets.POSITION_RELAY_URL }}
       POSITION_RELAY_TOKEN: ${{ secrets.POSITION_RELAY_TOKEN }}
       POSITION_RELAY_EXCHANGES: binance,bybit
