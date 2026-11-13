@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { lighterPositions } from "../lib/lighter.mjs";
+import { accountIndex, lighterPositions } from "../lib/lighter.mjs";
 import { closedLighterTrades } from "../lib/lighter-weekly.mjs";
 
 test("Lighter uses sign rather than unsigned position size", () => {
@@ -14,9 +14,9 @@ test("Lighter uses sign rather than unsigned position size", () => {
 test("Lighter closes a short only after both reducing fills and refuses incomplete PNL", () => {
   const base = { market_kind: "perps", market_id: 193, market_symbol: "ANTHROPIC", price: "1800" };
   const fills = [
-    { ...base, trade_id_str: "1", timestamp: 1, ask_account_id: 14825, bid_account_id: 1, is_maker_ask: false, size: "2", taker_position_size_before: "0" },
-    { ...base, trade_id_str: "2", timestamp: 2, ask_account_id: 1, bid_account_id: 14825, is_maker_ask: true, size: "1", taker_position_size_before: "-2", bid_account_pnl: "10" },
-    { ...base, trade_id_str: "3", timestamp: 3, ask_account_id: 1, bid_account_id: 14825, is_maker_ask: true, size: "1", taker_position_size_before: "-1", bid_account_pnl: "12" },
+    { ...base, trade_id_str: "1", timestamp: 1, ask_account_id: accountIndex, bid_account_id: 1, is_maker_ask: false, size: "2", taker_position_size_before: "0" },
+    { ...base, trade_id_str: "2", timestamp: 2, ask_account_id: 1, bid_account_id: accountIndex, is_maker_ask: true, size: "1", taker_position_size_before: "-2", bid_account_pnl: "10" },
+    { ...base, trade_id_str: "3", timestamp: 3, ask_account_id: 1, bid_account_id: accountIndex, is_maker_ask: true, size: "1", taker_position_size_before: "-1", bid_account_pnl: "12" },
   ];
   assert.deepEqual(closedLighterTrades(fills.slice(0, 2), 0, 10), []);
   const [row] = closedLighterTrades(fills, 0, 10);
